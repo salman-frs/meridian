@@ -8,6 +8,7 @@ Meridian preserves the original config and writes a patched config for runtime e
 - injects an OTLP exporter named `otlp/meridian_capture`
 - replaces pipeline receivers with the injected receiver
 - replaces pipeline exporters with the capture exporter, while preserving connector exporters
+- resolves the capture exporter endpoint from the selected runtime engine
 
 ## Tee mode
 

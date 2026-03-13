@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: meridian-e2e-settings
+data:
+  MERIDIAN_SCENARIO: happy
+  MERIDIAN_OTLP_ENDPOINT: otel-gateway.observability.svc.cluster.local:4317
+  MERIDIAN_OTLP_INSECURE: "true"
+  MERIDIAN_OTLP_TIMEOUT: 3s
+  MERIDIAN_DISABLE_TRACES: "false"
+  MERIDIAN_DISABLE_METRICS: "false"
+  MERIDIAN_DISABLE_APP_LOGS: "false"
+  MERIDIAN_STOREFRONT_URL: http://storefront:8080
+  MERIDIAN_CHECKOUT_URL: http://checkout:8080
+  MERIDIAN_INVENTORY_URL: http://inventory:8080
+  MERIDIAN_HEARTBEAT_INTERVAL: 5s
+  MERIDIAN_TRAFFICGEN_REQUESTS: "3"
+  MERIDIAN_TRAFFICGEN_DELAY: 1s
+  MERIDIAN_EXPECT_BROWSE_STATUS: "200"
+  MERIDIAN_EXPECT_CHECKOUT_STATUS: "200"
+  MERIDIAN_EXPECTED_TOKEN: meridian-shared-secret
+  MERIDIAN_OUTBOUND_TOKEN: meridian-shared-secret

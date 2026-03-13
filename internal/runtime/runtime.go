@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"slices"
 	"strings"
 	"time"
@@ -17,6 +16,7 @@ import (
 )
 
 type Options struct {
+	Engine         model.RuntimeEngine
 	CollectorImage string
 	Timeout        time.Duration
 	StartupTimeout time.Duration
@@ -27,6 +27,7 @@ type Options struct {
 
 type Runner struct {
 	options Options
+	adapter engineAdapter
 }
 
 type RunRequest struct {
@@ -49,12 +50,23 @@ type RunResult struct {
 }
 
 func NewRunner(options Options) *Runner {
-	return &Runner{options: options}
+	adapter, err := ResolveEngine(options.Engine)
+	if err != nil {
+		return &Runner{options: options}
+	}
+	return &Runner{options: options, adapter: adapter}
 }
 
 func (r *Runner) Run(req RunRequest) (RunResult, error) {
-	if _, err := exec.LookPath("docker"); err != nil {
-		return RunResult{}, &model.ExitError{Code: 3, Err: errors.New("docker is required for runtime tests")}
+	if r.adapter == nil {
+		adapter, err := ResolveEngine(r.options.Engine)
+		if err != nil {
+			return RunResult{}, &model.ExitError{Code: 3, Err: err}
+		}
+		r.adapter = adapter
+	}
+	if err := r.adapter.Preflight(); err != nil {
+		return RunResult{}, &model.ExitError{Code: 3, Err: err}
 	}
 	address, err := req.CaptureSink.Start(req.Plan.CapturePort)
 	if err != nil {
@@ -62,7 +74,9 @@ func (r *Runner) Run(req RunRequest) (RunResult, error) {
 	}
 	defer req.CaptureSink.Stop()
 
-	req.Plan.CaptureEndpoint = strings.ReplaceAll(address, "127.0.0.1", "host.docker.internal")
+	req.Plan.Engine = r.adapter.Engine()
+	req.Plan.RuntimeBackend = r.adapter.RuntimeBackend()
+	req.Plan.CaptureEndpoint = r.adapter.CaptureEndpoint(address, req.Plan.CapturePort)
 	req.Plan.InjectionEndpoint = fmt.Sprintf("127.0.0.1:%d", req.Plan.InjectionPort)
 
 	containerID, logs, err := r.startCollector(req)
@@ -76,7 +90,7 @@ func (r *Runner) Run(req RunRequest) (RunResult, error) {
 		if r.options.KeepContainers || containerID == "" {
 			return
 		}
-		_, _ = exec.Command("docker", "rm", "-f", containerID).CombinedOutput()
+		_, _ = r.adapter.Command("rm", "-f", containerID).CombinedOutput()
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), r.options.InjectTimeout)
@@ -96,7 +110,7 @@ func (r *Runner) Run(req RunRequest) (RunResult, error) {
 		return RunResult{}, &model.ExitError{Code: 2, Err: fmt.Errorf("failed to load custom assertions: %w", err)}
 	}
 
-	logs, _ = exec.Command("docker", "logs", containerID).CombinedOutput()
+	logs, _ = r.adapter.Command("logs", containerID).CombinedOutput()
 	if err := os.WriteFile(req.Artifacts.CollectorLog, logs, 0o644); err != nil {
 		return RunResult{}, err
 	}
@@ -119,7 +133,7 @@ func (r *Runner) startCollector(req RunRequest) (string, []byte, error) {
 			return containerID, logs, nil
 		}
 		if containerID != "" && !r.options.KeepContainers {
-			_, _ = exec.Command("docker", "rm", "-f", containerID).CombinedOutput()
+			_, _ = r.adapter.Command("rm", "-f", containerID).CombinedOutput()
 		}
 		if err != nil {
 			lastErr = err
@@ -136,42 +150,29 @@ func (r *Runner) startCollector(req RunRequest) (string, []byte, error) {
 }
 
 func (r *Runner) startCollectorAttempt(req RunRequest) (string, []byte, bool, bool, error) {
-	runArgs := []string{
-		"run", "-d",
-		"--name", "meridian-" + sanitizeName(req.Plan.RunID),
-		"--add-host", "host.docker.internal:host-gateway",
-		"-p", fmt.Sprintf("%d:%d", req.Plan.InjectionPort, req.Plan.InjectionPort),
-		"-v", req.Artifacts.PatchedConfig + ":/etc/meridian/config.yaml:ro",
-	}
-	for key, value := range req.Env {
-		runArgs = append(runArgs, "-e", key+"="+value)
-	}
-	runArgs = append(runArgs,
-		req.Plan.CollectorImage,
-		"--config=/etc/meridian/config.yaml",
-	)
-	output, err := exec.Command("docker", runArgs...).CombinedOutput()
+	runArgs := r.adapter.RunArgs(req)
+	output, err := r.adapter.Command(runArgs...).CombinedOutput()
 	if err != nil {
-		return "", output, false, false, &model.ExitError{Code: 3, Err: fmt.Errorf("failed to start collector container: %s", strings.TrimSpace(string(output)))}
+		return "", output, false, false, &model.ExitError{Code: 3, Err: fmt.Errorf("failed to start collector container with %s via %s: %s", r.adapter.Engine(), r.adapter.CommandLabel(), trimOutput(output))}
 	}
 	containerID := strings.TrimSpace(string(output))
 	deadline := time.Now().Add(r.options.StartupTimeout)
 	for time.Now().Before(deadline) {
-		logs, _ := exec.Command("docker", "logs", containerID).CombinedOutput()
+		logs, _ := r.adapter.Command("logs", containerID).CombinedOutput()
 		text := string(logs)
 		if strings.Contains(text, "Everything is ready") || strings.Contains(text, "Starting") || strings.Contains(text, "Serving") {
 			return containerID, logs, true, false, nil
 		}
-		if !containerRunning(containerID) {
+		if !r.containerRunning(containerID) {
 			return containerID, logs, false, true, &model.ExitError{Code: 3, Err: fmt.Errorf("collector exited before it became ready: %s", strings.TrimSpace(text))}
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	if !containerRunning(containerID) {
-		logs, _ := exec.Command("docker", "logs", containerID).CombinedOutput()
+	if !r.containerRunning(containerID) {
+		logs, _ := r.adapter.Command("logs", containerID).CombinedOutput()
 		return containerID, logs, false, true, &model.ExitError{Code: 3, Err: fmt.Errorf("collector exited before startup timeout: %s", strings.TrimSpace(string(logs)))}
 	}
-	logs, _ := exec.Command("docker", "logs", containerID).CombinedOutput()
+	logs, _ := r.adapter.Command("logs", containerID).CombinedOutput()
 	return containerID, logs, true, false, nil
 }
 
@@ -209,18 +210,19 @@ func allSignalsCaptured(captures []model.SignalCapture, signals []model.SignalTy
 	return true
 }
 
-func containerRunning(containerID string) bool {
-	output, err := exec.Command("docker", "inspect", "-f", "{{.State.Running}}", containerID).CombinedOutput()
+func (r *Runner) containerRunning(containerID string) bool {
+	output, err := r.adapter.Command("inspect", "-f", "{{.State.Running}}", containerID).CombinedOutput()
 	if err != nil {
 		return false
 	}
-	return strings.TrimSpace(string(output)) == "true"
+	return parseRunningState(output)
 }
 
 func reproCommand(req RunRequest) string {
 	parts := []string{
 		"meridian", "test",
 		"-c", firstPath(req.Original.SourcePaths),
+		"--engine=" + string(req.Plan.Engine),
 		"--mode=" + string(req.Plan.Mode),
 		"--collector-image", req.Plan.CollectorImage,
 		"--timeout", req.Plan.Timeout,
@@ -246,4 +248,25 @@ func reproCommand(req RunRequest) string {
 func sanitizeName(value string) string {
 	replacer := strings.NewReplacer(":", "-", "/", "-", " ", "-", "@", "-", "=", "-", "+", "-", "%", "-")
 	return replacer.Replace(value)
+}
+
+func trimOutput(output []byte) string {
+	text := strings.TrimSpace(string(output))
+	if text == "" {
+		return errors.New("no command output").Error()
+	}
+	return text
+}
+
+func parseRunningState(output []byte) bool {
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		switch strings.TrimSpace(lines[i]) {
+		case "true":
+			return true
+		case "false":
+			return false
+		}
+	}
+	return false
 }

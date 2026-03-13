@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: storefront
+  template:
+    metadata:
+      labels:
+        app: storefront
+    spec:
+      containers:
+        - name: storefront
+          image: meridian-k3s-e2e-storefront:IMAGE_TAG
+          imagePullPolicy: Never
+          envFrom:
+            - configMapRef:
+                name: meridian-e2e-settings
+            - configMapRef:
+                name: meridian-e2e-run
+          env:
+            - name: MERIDIAN_ROLE
+              value: storefront
+            - name: MERIDIAN_SERVICE_NAME
+              value: storefront
+            - name: PORT
+              value: "8080"
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 128Mi

@@ -14,17 +14,20 @@ const (
 )
 
 type Options struct {
-	RunID          string
-	Mode           model.RuntimeMode
-	CollectorImage string
-	Timeout        time.Duration
-	StartupTimeout time.Duration
-	InjectTimeout  time.Duration
-	CaptureTimeout time.Duration
-	PipelineArgs   []string
-	InjectionPort  int
-	CapturePort    int
-	CaptureSamples int
+	RunID           string
+	Engine          model.RuntimeEngine
+	RuntimeBackend  string
+	Mode            model.RuntimeMode
+	CollectorImage  string
+	Timeout         time.Duration
+	StartupTimeout  time.Duration
+	InjectTimeout   time.Duration
+	CaptureTimeout  time.Duration
+	PipelineArgs    []string
+	InjectionPort   int
+	CapturePort     int
+	CaptureEndpoint string
+	CaptureSamples  int
 }
 
 func Build(cfg model.ConfigModel, opts Options) (model.ConfigModel, model.TestPlan, error) {
@@ -52,7 +55,7 @@ func Build(cfg model.ConfigModel, opts Options) (model.ConfigModel, model.TestPl
 	}
 	exporters := ensureSection(raw, "exporters")
 	exporters[captureExporterName] = map[string]any{
-		"endpoint": fmt.Sprintf("host.docker.internal:%d", opts.CapturePort),
+		"endpoint":    opts.CaptureEndpoint,
 		"compression": "none",
 		"tls": map[string]any{
 			"insecure": true,
@@ -110,12 +113,14 @@ func Build(cfg model.ConfigModel, opts Options) (model.ConfigModel, model.TestPl
 	patched.CanonicalYAML = patchedYAML
 	plan := model.TestPlan{
 		RunID:             opts.RunID,
+		Engine:            opts.Engine,
+		RuntimeBackend:    opts.RuntimeBackend,
 		Mode:              opts.Mode,
 		CollectorImage:    opts.CollectorImage,
 		Pipelines:         selected,
 		Signals:           signals,
 		InjectedReceiver:  injectedReceiverName,
-		CaptureEndpoint:   fmt.Sprintf("host.docker.internal:%d", opts.CapturePort),
+		CaptureEndpoint:   opts.CaptureEndpoint,
 		InjectionEndpoint: fmt.Sprintf("127.0.0.1:%d", opts.InjectionPort),
 		InjectionPort:     opts.InjectionPort,
 		CapturePort:       opts.CapturePort,

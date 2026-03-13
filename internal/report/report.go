@@ -36,6 +36,8 @@ func RenderTerminal(result model.RunResult) string {
 		fmt.Sprintf("RESULT: %s", result.Status),
 		fmt.Sprintf("Run ID: %s", result.RunID),
 		fmt.Sprintf("Config: %s", result.ConfigPath),
+		fmt.Sprintf("Engine: %s", result.Engine),
+		fmt.Sprintf("Runtime backend: %s", valueOrDefault(result.RuntimeBackend, "n/a")),
 		fmt.Sprintf("Mode: %s", result.Mode),
 		fmt.Sprintf("Collector image: %s", result.CollectorImage),
 		fmt.Sprintf("Artifacts: %s", result.Artifacts.RunDir),
@@ -91,6 +93,8 @@ func RenderSummaryMarkdown(result model.RunResult) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("## Meridian: %s\n\n", emojiStatus(result.Status)))
 	b.WriteString(fmt.Sprintf("**Config:** `%s`  \n", result.ConfigPath))
+	b.WriteString(fmt.Sprintf("**Engine:** `%s`  \n", result.Engine))
+	b.WriteString(fmt.Sprintf("**Runtime backend:** `%s`  \n", valueOrDefault(result.RuntimeBackend, "n/a")))
 	b.WriteString(fmt.Sprintf("**Mode:** `%s`  \n", result.Mode))
 	b.WriteString(fmt.Sprintf("**Collector image:** `%s`  \n", result.CollectorImage))
 	b.WriteString(fmt.Sprintf("**Run:** `%s`\n\n", result.StartedAt.Format(time.RFC3339)))
@@ -148,6 +152,13 @@ func emojiStatus(status string) string {
 		return "PASS ✅"
 	}
 	return "FAIL ❌"
+}
+
+func valueOrDefault(value string, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func findingsStatus(findings []model.Finding) string {

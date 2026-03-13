@@ -30,5 +30,7 @@ The CLI is a single binary. On each run it writes a deterministic artifact bundl
 ## Requirements
 
 - Go 1.24+ to build from source
-- Docker for `check` and `test`
+- Docker for the default `check` and `test` runtime path
+- `nerdctl` for Linux containerd runtime support (`--engine containerd`)
+- Lima for macOS containerd runtime support (`lima nerdctl`)
 - Graphviz optional for `meridian graph --render=svg`

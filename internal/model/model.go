@@ -138,23 +138,33 @@ const (
 	RuntimeModeLive RuntimeMode = "live"
 )
 
+type RuntimeEngine string
+
+const (
+	RuntimeEngineAuto       RuntimeEngine = "auto"
+	RuntimeEngineDocker     RuntimeEngine = "docker"
+	RuntimeEngineContainerd RuntimeEngine = "containerd"
+)
+
 type TestPlan struct {
-	RunID             string       `json:"run_id" yaml:"run_id"`
-	Mode              RuntimeMode  `json:"mode" yaml:"mode"`
-	CollectorImage    string       `json:"collector_image" yaml:"collector_image"`
-	Pipelines         []string     `json:"pipelines" yaml:"pipelines"`
-	Signals           []SignalType `json:"signals" yaml:"signals"`
-	InjectedReceiver  string       `json:"injected_receiver" yaml:"injected_receiver"`
-	CaptureEndpoint   string       `json:"capture_endpoint" yaml:"capture_endpoint"`
-	InjectionEndpoint string       `json:"injection_endpoint" yaml:"injection_endpoint"`
-	InjectionPort     int          `json:"injection_port" yaml:"injection_port"`
-	CapturePort       int          `json:"capture_port" yaml:"capture_port"`
-	Timeout           string       `json:"timeout" yaml:"timeout"`
-	StartupTimeout    string       `json:"startup_timeout" yaml:"startup_timeout"`
-	InjectTimeout     string       `json:"inject_timeout" yaml:"inject_timeout"`
-	CaptureTimeout    string       `json:"capture_timeout" yaml:"capture_timeout"`
-	CaptureSamples    int          `json:"capture_samples" yaml:"capture_samples"`
-	InjectedAt        time.Time    `json:"injected_at,omitempty" yaml:"injected_at,omitempty"`
+	RunID             string        `json:"run_id" yaml:"run_id"`
+	Engine            RuntimeEngine `json:"engine" yaml:"engine"`
+	RuntimeBackend    string        `json:"runtime_backend,omitempty" yaml:"runtime_backend,omitempty"`
+	Mode              RuntimeMode   `json:"mode" yaml:"mode"`
+	CollectorImage    string        `json:"collector_image" yaml:"collector_image"`
+	Pipelines         []string      `json:"pipelines" yaml:"pipelines"`
+	Signals           []SignalType  `json:"signals" yaml:"signals"`
+	InjectedReceiver  string        `json:"injected_receiver" yaml:"injected_receiver"`
+	CaptureEndpoint   string        `json:"capture_endpoint" yaml:"capture_endpoint"`
+	InjectionEndpoint string        `json:"injection_endpoint" yaml:"injection_endpoint"`
+	InjectionPort     int           `json:"injection_port" yaml:"injection_port"`
+	CapturePort       int           `json:"capture_port" yaml:"capture_port"`
+	Timeout           string        `json:"timeout" yaml:"timeout"`
+	StartupTimeout    string        `json:"startup_timeout" yaml:"startup_timeout"`
+	InjectTimeout     string        `json:"inject_timeout" yaml:"inject_timeout"`
+	CaptureTimeout    string        `json:"capture_timeout" yaml:"capture_timeout"`
+	CaptureSamples    int           `json:"capture_samples" yaml:"capture_samples"`
+	InjectedAt        time.Time     `json:"injected_at,omitempty" yaml:"injected_at,omitempty"`
 }
 
 type RuntimePorts struct {
@@ -190,6 +200,8 @@ type RunResult struct {
 	ConfigPath     string            `json:"config_path" yaml:"config_path"`
 	Status         string            `json:"status" yaml:"status"`
 	Message        string            `json:"message,omitempty" yaml:"message,omitempty"`
+	Engine         RuntimeEngine     `json:"engine" yaml:"engine"`
+	RuntimeBackend string            `json:"runtime_backend,omitempty" yaml:"runtime_backend,omitempty"`
 	Mode           RuntimeMode       `json:"mode" yaml:"mode"`
 	CollectorImage string            `json:"collector_image" yaml:"collector_image"`
 	StartedAt      time.Time         `json:"started_at" yaml:"started_at"`

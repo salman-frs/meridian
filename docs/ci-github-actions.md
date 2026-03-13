@@ -8,6 +8,7 @@ Meridian ships a composite action in [action/action.yml](../action/action.yml).
 - uses: salman-frs/meridian/action@v1
   with:
     config: examples/basic/collector.yaml
+    engine: auto
 ```
 
 For local development inside this repository, use `uses: ./action`.
@@ -15,6 +16,7 @@ For local development inside this repository, use `uses: ./action`.
 ## Supported inputs
 
 - `config`
+- `engine`
 - `mode`
 - `collector_image`
 - `timeout`
@@ -32,3 +34,5 @@ For local development inside this repository, use `uses: ./action`.
 - uploads the artifact bundle
 - writes the GitHub step summary
 - updates one PR comment with the `<!-- meridian-comment -->` marker when enabled
+
+Use `engine: containerd` only on Linux runners with `nerdctl` available. `engine: auto` keeps Docker as the preferred runtime when both engines are present, including macOS hosts that also have Lima installed.

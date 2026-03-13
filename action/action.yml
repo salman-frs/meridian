@@ -5,6 +5,10 @@ inputs:
   config:
     description: Path to the collector config
     required: true
+  engine:
+    description: Container engine to use
+    required: false
+    default: auto
   mode:
     description: Runtime mode
     required: false
@@ -59,7 +63,7 @@ runs:
         set -euo pipefail
         cd "${{ github.workspace }}"
         STATUS=0
-        CMD=("$RUNNER_TEMP/meridian" "ci" "--config" "${{ inputs.config }}" "--mode" "${{ inputs.mode }}" "--collector-image" "${{ inputs.collector_image }}" "--timeout" "${{ inputs.timeout }}" "--render-graph" "${{ inputs.render_graph }}" "--summary-file" "$RUNNER_TEMP/summary.md" "--json-file" "$RUNNER_TEMP/report.json" "--pr-comment-file" "$RUNNER_TEMP/pr-comment.md")
+        CMD=("$RUNNER_TEMP/meridian" "ci" "--config" "${{ inputs.config }}" "--engine" "${{ inputs.engine }}" "--mode" "${{ inputs.mode }}" "--collector-image" "${{ inputs.collector_image }}" "--timeout" "${{ inputs.timeout }}" "--render-graph" "${{ inputs.render_graph }}" "--summary-file" "$RUNNER_TEMP/summary.md" "--json-file" "$RUNNER_TEMP/report.json" "--pr-comment-file" "$RUNNER_TEMP/pr-comment.md")
         if [ -n "${{ inputs.env_file }}" ]; then
           CMD+=("--env-file" "${{ inputs.env_file }}")
         fi

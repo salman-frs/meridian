@@ -1,12 +1,17 @@
 # Troubleshooting
 
-## Docker missing
+## Container engine missing
 
-Meridian runtime commands need Docker. If `meridian check` or `meridian test` fails before container startup:
+Meridian runtime commands need a supported container engine. If `meridian check` or `meridian test` fails before container startup:
 
-- confirm `docker version` works
-- confirm the daemon is running
+- confirm `docker version` works when using Docker
+- confirm `nerdctl version` works on Linux when using `--engine containerd`
+- confirm `lima nerdctl version` works on macOS when using `--engine containerd`
+- confirm the selected daemon/runtime is running
+- try `--engine docker` or `--engine containerd` explicitly instead of `auto`
 - rerun with `--verbose`
+
+On macOS, `--engine containerd` uses Lima rather than trying to talk to an OrbStack Docker socket directly.
 
 ## Missing env vars
 

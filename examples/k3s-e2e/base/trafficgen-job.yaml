@@ -1,0 +1,32 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: trafficgen
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: trafficgen
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: trafficgen
+          image: meridian-k3s-e2e-trafficgen:IMAGE_TAG
+          imagePullPolicy: Never
+          envFrom:
+            - configMapRef:
+                name: meridian-e2e-settings
+            - configMapRef:
+                name: meridian-e2e-run
+          env:
+            - name: MERIDIAN_ROLE
+              value: trafficgen
+            - name: MERIDIAN_SERVICE_NAME
+              value: trafficgen
+          resources:
+            requests:
+              cpu: 25m
+              memory: 48Mi
+            limits:
+              memory: 96Mi

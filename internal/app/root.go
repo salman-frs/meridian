@@ -41,6 +41,7 @@ type GlobalOptions struct {
 }
 
 type RuntimeOptions struct {
+	Engine         string
 	Mode           string
 	CollectorImage string
 	Timeout        time.Duration
@@ -68,6 +69,7 @@ type DiffOptions struct {
 func NewRootCommand() *cobra.Command {
 	opts := &GlobalOptions{}
 	runtimeOpts := &RuntimeOptions{
+		Engine:         string(model.RuntimeEngineAuto),
 		Mode:           string(model.RuntimeModeSafe),
 		CollectorImage: defaultCollectorImage,
 		Timeout:        30 * time.Second,
@@ -378,6 +380,7 @@ func newCompletionCommand(root *cobra.Command) *cobra.Command {
 }
 
 func addRuntimeFlags(cmd *cobra.Command, opts *RuntimeOptions) {
+	cmd.Flags().StringVar(&opts.Engine, "engine", string(model.RuntimeEngineAuto), "container engine: auto|docker|containerd")
 	cmd.Flags().StringVar(&opts.Mode, "mode", string(model.RuntimeModeSafe), "runtime mode: safe|tee|live")
 	cmd.Flags().StringVar(&opts.CollectorImage, "collector-image", defaultCollectorImage, "collector image to run")
 	cmd.Flags().DurationVar(&opts.Timeout, "timeout", 30*time.Second, "overall runtime timeout")
@@ -491,18 +494,26 @@ func executeRun(global *GlobalOptions, runtimeOpts *RuntimeOptions, includeDiff 
 	}
 
 	patchStart := time.Now()
+	engineAdapter, err := runtime.ResolveEngine(model.RuntimeEngine(runtimeOpts.Engine))
+	if err != nil {
+		return model.RunResult{}, &model.ExitError{Code: 3, Err: err}
+	}
+	captureEndpoint := engineAdapter.CaptureEndpoint(fmt.Sprintf("127.0.0.1:%d", capturePort), capturePort)
 	patchedConfig, plan, patchErr := patch.Build(cfg, patch.Options{
-		RunID:          runID,
-		Mode:           model.RuntimeMode(runtimeOpts.Mode),
-		CollectorImage: runtimeOpts.CollectorImage,
-		Timeout:        runtimeOpts.Timeout,
-		StartupTimeout: runtimeOpts.StartupTimeout,
-		InjectTimeout:  runtimeOpts.InjectTimeout,
-		CaptureTimeout: runtimeOpts.CaptureTimeout,
-		PipelineArgs:   runtimeOpts.Pipelines,
-		InjectionPort:  injectionPort,
-		CapturePort:    capturePort,
-		CaptureSamples: runtimeOpts.CaptureSamples,
+		RunID:           runID,
+		Engine:          engineAdapter.Engine(),
+		RuntimeBackend:  engineAdapter.RuntimeBackend(),
+		Mode:            model.RuntimeMode(runtimeOpts.Mode),
+		CollectorImage:  runtimeOpts.CollectorImage,
+		Timeout:         runtimeOpts.Timeout,
+		StartupTimeout:  runtimeOpts.StartupTimeout,
+		InjectTimeout:   runtimeOpts.InjectTimeout,
+		CaptureTimeout:  runtimeOpts.CaptureTimeout,
+		PipelineArgs:    runtimeOpts.Pipelines,
+		InjectionPort:   injectionPort,
+		CapturePort:     capturePort,
+		CaptureEndpoint: captureEndpoint,
+		CaptureSamples:  runtimeOpts.CaptureSamples,
 	})
 	if patchErr != nil {
 		return model.RunResult{}, &model.ExitError{Code: 2, Err: patchErr}
@@ -516,6 +527,8 @@ func executeRun(global *GlobalOptions, runtimeOpts *RuntimeOptions, includeDiff 
 		RunID:          runID,
 		ConfigPath:     cfg.PrimarySourcePath(),
 		Status:         "PASS",
+		Engine:         engineAdapter.Engine(),
+		RuntimeBackend: engineAdapter.RuntimeBackend(),
 		Mode:           model.RuntimeMode(runtimeOpts.Mode),
 		CollectorImage: runtimeOpts.CollectorImage,
 		StartedAt:      startedAt,
@@ -529,10 +542,10 @@ func executeRun(global *GlobalOptions, runtimeOpts *RuntimeOptions, includeDiff 
 			InjectionGRPC: injectionPort,
 			CaptureGRPC:   capturePort,
 		},
-		Findings:       findings,
-		Graph:          g,
-		Plan:           plan,
-		Artifacts:      artifacts,
+		Findings:  findings,
+		Graph:     g,
+		Plan:      plan,
+		Artifacts: artifacts,
 	}
 	if includeDiff && hasDiffInputs(global, runtimeOpts) {
 		diffStart := time.Now()
@@ -568,6 +581,7 @@ func executeRun(global *GlobalOptions, runtimeOpts *RuntimeOptions, includeDiff 
 	runtimeStart := time.Now()
 	sink := capture.NewInMemorySink(runID, artifacts.CapturesDir, runtimeOpts.CaptureSamples)
 	runner := runtime.NewRunner(runtime.Options{
+		Engine:         engineAdapter.Engine(),
 		CollectorImage: runtimeOpts.CollectorImage,
 		Timeout:        runtimeOpts.Timeout,
 		StartupTimeout: runtimeOpts.StartupTimeout,
@@ -597,6 +611,7 @@ func executeRun(global *GlobalOptions, runtimeOpts *RuntimeOptions, includeDiff 
 	result.Timings["runtime"] = time.Since(runtimeStart).String()
 	result.Captures = runtimeResult.Captures
 	result.Plan = runtimeResult.Plan
+	result.RuntimeBackend = runtimeResult.Plan.RuntimeBackend
 	result.Assertions = assert.Evaluate(sink, runtimeResult.Captures, runtimeResult.CustomAssertions, runtimeResult.Plan)
 	result.ContainerID = runtimeResult.ContainerID
 	result.ReproCommand = runtimeResult.ReproCommand
@@ -619,6 +634,9 @@ func executeRun(global *GlobalOptions, runtimeOpts *RuntimeOptions, includeDiff 
 
 func runHarness(global *GlobalOptions, runtimeOpts *RuntimeOptions, includeDiff bool, cmd *cobra.Command) error {
 	result, err := executeRun(global, runtimeOpts, includeDiff)
+	if err != nil && shouldRetryRuntimeRun(err) {
+		result, err = executeRun(global, runtimeOpts, includeDiff)
+	}
 	if err != nil {
 		return err
 	}
@@ -633,6 +651,15 @@ func runHarness(global *GlobalOptions, runtimeOpts *RuntimeOptions, includeDiff 
 		return &model.ExitError{Code: 2}
 	}
 	return nil
+}
+
+func shouldRetryRuntimeRun(err error) bool {
+	var exitErr *model.ExitError
+	if !errors.As(err, &exitErr) || exitErr == nil || exitErr.Code != 3 {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "port is already allocated") || strings.Contains(message, "address already in use")
 }
 
 func printJSON(v any) error {
@@ -730,6 +757,11 @@ func validateRuntimeOptions(global *GlobalOptions, runtimeOpts *RuntimeOptions) 
 	case string(model.RuntimeModeSafe), string(model.RuntimeModeTee), string(model.RuntimeModeLive):
 	default:
 		return fmt.Errorf("unsupported --mode %q", runtimeOpts.Mode)
+	}
+	switch runtimeOpts.Engine {
+	case string(model.RuntimeEngineAuto), string(model.RuntimeEngineDocker), string(model.RuntimeEngineContainerd):
+	default:
+		return fmt.Errorf("unsupported --engine %q", runtimeOpts.Engine)
 	}
 	switch runtimeOpts.RenderGraph {
 	case "none", "mermaid", "svg":

@@ -10,6 +10,10 @@ Meridian is a local-first CLI and GitHub Action for OpenTelemetry Collector conf
 - deterministic runtime checks against an ephemeral Collector
 - artifacted reports for local debugging and PR review
 
+Runtime commands support `--engine auto|docker|containerd`. `auto` prefers Docker when both are available and falls back to `nerdctl`-backed containerd on Linux or `lima nerdctl` on macOS.
+
+For Kubernetes end-to-end validation, Meridian now ships a repo-owned k3s fixture under `examples/k3s-e2e/`. The official OpenTelemetry Demo is optional/manual only and is not the blocking acceptance gate for this repo anymore.
+
 ## Quickstart
 
 Build the CLI:
@@ -29,6 +33,14 @@ Run the full safe-mode check:
 ```bash
 ./bin/meridian check -c examples/basic/collector.yaml
 ```
+
+Run against containerd:
+
+```bash
+./bin/meridian check -c examples/basic/collector.yaml --engine containerd
+```
+
+On macOS, `--engine containerd` uses `lima nerdctl`. Direct `nerdctl` reuse of an OrbStack Docker context is not supported.
 
 Artifacts are written under `./meridian-artifacts/runs/<run_id>/`.
 
@@ -71,6 +83,8 @@ What safe mode does not validate:
 
 Meridian always injects a Meridian-managed OTLP receiver for deterministic runtime input and persists bounded sample captures by default instead of full payload dumps.
 
+For Docker, Meridian routes capture traffic through a host alias. For Linux containerd, Meridian uses host networking via `nerdctl`. For macOS containerd, Meridian uses `lima nerdctl`, published injection ports, and `host.lima.internal` for the capture sink.
+
 Use `tee` or `live` only when you intentionally want more realistic destination behavior.
 
 ## GitHub Action
@@ -98,6 +112,7 @@ jobs:
       - uses: ./action
         with:
           config: examples/basic/collector.yaml
+          engine: auto
 ```
 
 Published usage:
@@ -106,6 +121,7 @@ Published usage:
       - uses: salman-frs/meridian/action@v1
         with:
           config: examples/basic/collector.yaml
+          engine: auto
 ```
 
 More setup details live in [docs/ci-github-actions.md](docs/ci-github-actions.md).
@@ -114,6 +130,7 @@ More setup details live in [docs/ci-github-actions.md](docs/ci-github-actions.md
 
 - [install.md](docs/install.md)
 - [ci-github-actions.md](docs/ci-github-actions.md)
+- [k3s-e2e.md](docs/k3s-e2e.md)
 - [assertions.md](docs/assertions.md)
 - [troubleshooting.md](docs/troubleshooting.md)
 - [config-patching.md](docs/config-patching.md)
@@ -124,3 +141,20 @@ More setup details live in [docs/ci-github-actions.md](docs/ci-github-actions.md
 - [routing](examples/routing/collector.yaml)
 - [redaction](examples/redaction/collector.yaml)
 - [multipipeline](examples/multipipeline/collector.yaml)
+- [k3s-e2e](examples/k3s-e2e/)
+
+## K3s E2E
+
+Run the repo-owned stack on the VM:
+
+```bash
+scripts/e2e_k3s_vm.sh happy
+```
+
+Available scenarios:
+
+- `happy`
+- `drop-traces`
+- `misroute-logs`
+- `auth-fail`
+- `backend-unreachable`
