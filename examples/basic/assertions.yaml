@@ -1,0 +1,14 @@
+version: 1
+defaults:
+  timeout: 10s
+  min_count: 1
+
+assertions:
+  - id: traces-flow
+    severity: fail
+    signal: traces
+    where:
+      attributes:
+        http.route: /checkout
+    expect:
+      min_count: 1

@@ -1,0 +1,107 @@
+name: Meridian
+description: Validate and runtime-test OpenTelemetry Collector configs
+
+inputs:
+  config:
+    description: Path to the collector config
+    required: true
+  mode:
+    description: Runtime mode
+    required: false
+    default: safe
+  collector_image:
+    description: Collector image to run
+    required: false
+    default: otel/opentelemetry-collector-contrib@sha256:e7c92c715f28ff142f3bcaccd4fc5603cf4c71276ef09954a38eb4038500a5a5
+  timeout:
+    description: Runtime timeout
+    required: false
+    default: 30s
+  env_file:
+    description: Optional dotenv file
+    required: false
+    default: ""
+  assertions:
+    description: Optional assertions file
+    required: false
+    default: ""
+  render_graph:
+    description: Graph render mode
+    required: false
+    default: mermaid
+  comment_mode:
+    description: off|create|update
+    required: false
+    default: update
+  artifact_retention_days:
+    description: Uploaded artifact retention days
+    required: false
+    default: "7"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: ${{ github.action_path }}/../go.mod
+
+    - name: Build Meridian
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "${{ github.action_path }}/.."
+        go build -o "$RUNNER_TEMP/meridian" ./cmd/meridian
+
+    - name: Run Meridian
+      id: meridian
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "${{ github.workspace }}"
+        STATUS=0
+        CMD=("$RUNNER_TEMP/meridian" "ci" "--config" "${{ inputs.config }}" "--mode" "${{ inputs.mode }}" "--collector-image" "${{ inputs.collector_image }}" "--timeout" "${{ inputs.timeout }}" "--render-graph" "${{ inputs.render_graph }}" "--summary-file" "$RUNNER_TEMP/summary.md" "--json-file" "$RUNNER_TEMP/report.json" "--pr-comment-file" "$RUNNER_TEMP/pr-comment.md")
+        if [ -n "${{ inputs.env_file }}" ]; then
+          CMD+=("--env-file" "${{ inputs.env_file }}")
+        fi
+        if [ -n "${{ inputs.assertions }}" ]; then
+          CMD+=("--assertions" "${{ inputs.assertions }}")
+        fi
+        "${CMD[@]}" || STATUS=$?
+        echo "status=${STATUS:-0}" >> "$GITHUB_OUTPUT"
+
+    - name: Upload artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: meridian-artifacts
+        path: |
+          ${{ github.workspace }}/meridian-artifacts
+          ${{ runner.temp }}/summary.md
+          ${{ runner.temp }}/report.json
+        retention-days: ${{ inputs.artifact_retention_days }}
+
+    - name: Update PR comment
+      if: ${{ github.event_name == 'pull_request' && inputs.comment_mode != 'off' }}
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const marker = '<!-- meridian-comment -->';
+          const file = process.env.RUNNER_TEMP + '/pr-comment.md';
+          const body = fs.existsSync(file)
+            ? fs.readFileSync(file, 'utf8')
+            : marker + '\nMeridian run completed.';
+          const { owner, repo } = context.repo;
+          const issue_number = context.issue.number;
+          const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 });
+          const existing = comments.find(comment => comment.body && comment.body.includes(marker));
+          if (existing && '${{ inputs.comment_mode }}' === 'update') {
+            await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+          } else if (!existing || '${{ inputs.comment_mode }}' === 'create') {
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+          }
+
+    - name: Fail job when Meridian fails
+      if: ${{ steps.meridian.outputs.status != '0' }}
+      shell: bash
+      run: exit "${{ steps.meridian.outputs.status }}"

@@ -1,0 +1,15 @@
+version: 1
+defaults:
+  timeout: 10s
+  min_count: 1
+
+assertions:
+  - id: no-authorization-header
+    severity: fail
+    signal: traces
+    where:
+      attributes:
+        meridian.run_id: "{{RUN_ID}}"
+    expect:
+      attributes_absent:
+        - http.request.header.authorization

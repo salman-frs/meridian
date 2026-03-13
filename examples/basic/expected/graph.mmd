@@ -1,0 +1,8 @@
+flowchart LR
+  exporter_debug["debug"]
+  pipeline_traces["traces"]
+  processor_batch["batch"]
+  receiver_otlp["otlp"]
+  receiver_otlp --> pipeline_traces
+  pipeline_traces --> processor_batch
+  processor_batch --> exporter_debug
