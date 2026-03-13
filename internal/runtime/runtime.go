@@ -28,6 +28,9 @@ type Options struct {
 type Runner struct {
 	options Options
 	adapter engineAdapter
+	now     func() time.Time
+	sleep   func(time.Duration)
+	runCmd  func(args ...string) ([]byte, error)
 }
 
 type RunRequest struct {
@@ -52,66 +55,59 @@ type RunResult struct {
 func NewRunner(options Options) *Runner {
 	adapter, err := ResolveEngine(options.Engine)
 	if err != nil {
-		return &Runner{options: options}
+		return &Runner{
+			options: options,
+			now:     time.Now,
+			sleep:   time.Sleep,
+		}
 	}
-	return &Runner{options: options, adapter: adapter}
+	return &Runner{
+		options: options,
+		adapter: adapter,
+		now:     time.Now,
+		sleep:   time.Sleep,
+	}
 }
 
 func (r *Runner) Run(req RunRequest) (RunResult, error) {
-	if r.adapter == nil {
-		adapter, err := ResolveEngine(r.options.Engine)
-		if err != nil {
-			return RunResult{}, &model.ExitError{Code: 3, Err: err}
-		}
-		r.adapter = adapter
+	if err := r.ensureAdapter(); err != nil {
+		return RunResult{}, err
 	}
 	if err := r.adapter.Preflight(); err != nil {
 		return RunResult{}, &model.ExitError{Code: 3, Err: err}
 	}
+
 	address, err := req.CaptureSink.Start(req.Plan.CapturePort)
 	if err != nil {
 		return RunResult{}, &model.ExitError{Code: 3, Err: fmt.Errorf("failed to start capture sink: %w", err)}
 	}
 	defer req.CaptureSink.Stop()
 
-	req.Plan.Engine = r.adapter.Engine()
-	req.Plan.RuntimeBackend = r.adapter.RuntimeBackend()
-	req.Plan.CaptureEndpoint = r.adapter.CaptureEndpoint(address, req.Plan.CapturePort)
-	req.Plan.InjectionEndpoint = fmt.Sprintf("127.0.0.1:%d", req.Plan.InjectionPort)
+	req.Plan = r.configurePlan(req.Plan, address)
 
 	containerID, logs, err := r.startCollector(req)
 	if err != nil {
-		if len(logs) > 0 {
-			_ = os.WriteFile(req.Artifacts.CollectorLog, logs, 0o644)
-		}
+		_ = r.persistCollectorLogs(req.Artifacts.CollectorLog, logs)
 		return RunResult{}, err
 	}
-	defer func() {
-		if r.options.KeepContainers || containerID == "" {
-			return
-		}
-		_, _ = r.adapter.Command("rm", "-f", containerID).CombinedOutput()
-	}()
+	defer r.cleanupContainer(containerID)
 
-	ctx, cancel := context.WithTimeout(context.Background(), r.options.InjectTimeout)
-	defer cancel()
-	gen := generator.New(req.Plan.InjectionEndpoint, req.Seed)
-	req.Plan.InjectedAt = time.Now().UTC()
-	if err := gen.Send(ctx, req.Plan); err != nil {
-		return RunResult{}, &model.ExitError{Code: 3, Err: fmt.Errorf("failed to inject telemetry: %w", err)}
+	req.Plan.InjectedAt = r.now().UTC()
+	if err := r.injectTelemetry(req.Plan, req.Seed); err != nil {
+		return RunResult{}, err
 	}
 
-	captures := r.waitForCapture(req)
+	captures := r.waitForCapture(req.CaptureSink.Snapshot, req.Plan.Signals)
 	if err := req.CaptureSink.Persist(); err != nil {
 		return RunResult{}, err
 	}
-	customAssertions, err := assert.LoadCustomAssertions(req.Assertions, req.Plan.RunID)
+	customAssertions, err := r.loadCustomAssertions(req.Assertions, req.Plan.RunID)
 	if err != nil {
-		return RunResult{}, &model.ExitError{Code: 2, Err: fmt.Errorf("failed to load custom assertions: %w", err)}
+		return RunResult{}, err
 	}
 
-	logs, _ = r.adapter.Command("logs", containerID).CombinedOutput()
-	if err := os.WriteFile(req.Artifacts.CollectorLog, logs, 0o644); err != nil {
+	logs = r.collectorLogs(containerID)
+	if err := r.persistCollectorLogs(req.Artifacts.CollectorLog, logs); err != nil {
 		return RunResult{}, err
 	}
 
@@ -124,6 +120,59 @@ func (r *Runner) Run(req RunRequest) (RunResult, error) {
 	}, nil
 }
 
+func (r *Runner) ensureAdapter() error {
+	if r.adapter != nil {
+		return nil
+	}
+	adapter, err := ResolveEngine(r.options.Engine)
+	if err != nil {
+		return &model.ExitError{Code: 3, Err: err}
+	}
+	r.adapter = adapter
+	return nil
+}
+
+func (r *Runner) configurePlan(plan model.TestPlan, address string) model.TestPlan {
+	plan.Engine = r.adapter.Engine()
+	plan.RuntimeBackend = r.adapter.RuntimeBackend()
+	plan.CaptureEndpoint = r.adapter.CaptureEndpoint(address, plan.CapturePort)
+	plan.InjectionEndpoint = fmt.Sprintf("127.0.0.1:%d", plan.InjectionPort)
+	return plan
+}
+
+func (r *Runner) persistCollectorLogs(path string, logs []byte) error {
+	if len(logs) == 0 {
+		return nil
+	}
+	return os.WriteFile(path, logs, 0o644)
+}
+
+func (r *Runner) cleanupContainer(containerID string) {
+	if r.options.KeepContainers || containerID == "" {
+		return
+	}
+	_, _ = r.commandOutput("rm", "-f", containerID)
+}
+
+func (r *Runner) injectTelemetry(plan model.TestPlan, seed int64) error {
+	ctx, cancel := context.WithTimeout(context.Background(), r.options.InjectTimeout)
+	defer cancel()
+
+	gen := generator.New(plan.InjectionEndpoint, seed)
+	if err := gen.Send(ctx, plan); err != nil {
+		return &model.ExitError{Code: 3, Err: fmt.Errorf("failed to inject telemetry: %w", err)}
+	}
+	return nil
+}
+
+func (r *Runner) loadCustomAssertions(path string, runID string) ([]model.AssertionSpec, error) {
+	customAssertions, err := assert.LoadCustomAssertions(path, runID)
+	if err != nil {
+		return nil, &model.ExitError{Code: 2, Err: fmt.Errorf("failed to load custom assertions: %w", err)}
+	}
+	return customAssertions, nil
+}
+
 func (r *Runner) startCollector(req RunRequest) (string, []byte, error) {
 	var lastErr error
 	var lastLogs []byte
@@ -132,9 +181,7 @@ func (r *Runner) startCollector(req RunRequest) (string, []byte, error) {
 		if err == nil && ready {
 			return containerID, logs, nil
 		}
-		if containerID != "" && !r.options.KeepContainers {
-			_, _ = r.adapter.Command("rm", "-f", containerID).CombinedOutput()
-		}
+		r.cleanupContainer(containerID)
 		if err != nil {
 			lastErr = err
 			lastLogs = logs
@@ -151,28 +198,28 @@ func (r *Runner) startCollector(req RunRequest) (string, []byte, error) {
 
 func (r *Runner) startCollectorAttempt(req RunRequest) (string, []byte, bool, bool, error) {
 	runArgs := r.adapter.RunArgs(req)
-	output, err := r.adapter.Command(runArgs...).CombinedOutput()
+	output, err := r.commandOutput(runArgs...)
 	if err != nil {
 		return "", output, false, false, &model.ExitError{Code: 3, Err: fmt.Errorf("failed to start collector container with %s via %s: %s", r.adapter.Engine(), r.adapter.CommandLabel(), trimOutput(output))}
 	}
 	containerID := strings.TrimSpace(string(output))
-	deadline := time.Now().Add(r.options.StartupTimeout)
-	for time.Now().Before(deadline) {
-		logs, _ := r.adapter.Command("logs", containerID).CombinedOutput()
+	deadline := r.now().Add(r.options.StartupTimeout)
+	for r.now().Before(deadline) {
+		logs := r.collectorLogs(containerID)
 		text := string(logs)
-		if strings.Contains(text, "Everything is ready") || strings.Contains(text, "Starting") || strings.Contains(text, "Serving") {
+		if collectorReady(text) {
 			return containerID, logs, true, false, nil
 		}
 		if !r.containerRunning(containerID) {
 			return containerID, logs, false, true, &model.ExitError{Code: 3, Err: fmt.Errorf("collector exited before it became ready: %s", strings.TrimSpace(text))}
 		}
-		time.Sleep(500 * time.Millisecond)
+		r.sleep(500 * time.Millisecond)
 	}
 	if !r.containerRunning(containerID) {
-		logs, _ := r.adapter.Command("logs", containerID).CombinedOutput()
+		logs := r.collectorLogs(containerID)
 		return containerID, logs, false, true, &model.ExitError{Code: 3, Err: fmt.Errorf("collector exited before startup timeout: %s", strings.TrimSpace(string(logs)))}
 	}
-	logs, _ := r.adapter.Command("logs", containerID).CombinedOutput()
+	logs := r.collectorLogs(containerID)
 	return containerID, logs, true, false, nil
 }
 
@@ -183,14 +230,14 @@ func firstPath(paths []string) string {
 	return paths[0]
 }
 
-func (r *Runner) waitForCapture(req RunRequest) []model.SignalCapture {
-	deadline := time.Now().Add(r.options.CaptureTimeout)
+func (r *Runner) waitForCapture(snapshot func() []model.SignalCapture, signals []model.SignalType) []model.SignalCapture {
+	deadline := r.now().Add(r.options.CaptureTimeout)
 	for {
-		captures := req.CaptureSink.Snapshot()
-		if allSignalsCaptured(captures, req.Plan.Signals) || time.Now().After(deadline) {
+		captures := snapshot()
+		if allSignalsCaptured(captures, signals) || r.now().After(deadline) {
 			return captures
 		}
-		time.Sleep(200 * time.Millisecond)
+		r.sleep(200 * time.Millisecond)
 	}
 }
 
@@ -211,11 +258,29 @@ func allSignalsCaptured(captures []model.SignalCapture, signals []model.SignalTy
 }
 
 func (r *Runner) containerRunning(containerID string) bool {
-	output, err := r.adapter.Command("inspect", "-f", "{{.State.Running}}", containerID).CombinedOutput()
+	output, err := r.commandOutput("inspect", "-f", "{{.State.Running}}", containerID)
 	if err != nil {
 		return false
 	}
 	return parseRunningState(output)
+}
+
+func (r *Runner) collectorLogs(containerID string) []byte {
+	output, _ := r.commandOutput("logs", containerID)
+	return output
+}
+
+func (r *Runner) commandOutput(args ...string) ([]byte, error) {
+	if r.runCmd != nil {
+		return r.runCmd(args...)
+	}
+	return r.adapter.Command(args...).CombinedOutput()
+}
+
+func collectorReady(logs string) bool {
+	return strings.Contains(logs, "Everything is ready") ||
+		strings.Contains(logs, "Starting") ||
+		strings.Contains(logs, "Serving")
 }
 
 func reproCommand(req RunRequest) string {
