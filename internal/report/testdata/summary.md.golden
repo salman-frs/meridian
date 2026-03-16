@@ -9,11 +9,18 @@
 
 ### Summary
 - Validate: PASS
+- Semantic: PASS
 - Graph: PASS
 - traces: FAIL (received 0)
 
 ### What changed (risk highlights)
+- Effective config diff was available and used for classification.
 - **FAIL:** pipeline wiring changed
+
+### Semantic validation
+- components: PASS
+- validate: PASS
+- print-config: PASS
 
 ### Top failure
 - **traces-received**: received at least one item
@@ -28,5 +35,7 @@ Download the `meridian-artifacts` workflow artifact for the full bundle.
 - `collector.log`
 - `config.patched.yaml`
 - `graph.svg`
+- `collector-components.json`
+- `config.final.yaml`
 - `diff.md`
 - `captures/`

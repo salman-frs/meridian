@@ -11,6 +11,7 @@ import (
 
 	"github.com/salman-frs/meridian/internal/assert"
 	"github.com/salman-frs/meridian/internal/capture"
+	"github.com/salman-frs/meridian/internal/collector"
 	"github.com/salman-frs/meridian/internal/configio"
 	"github.com/salman-frs/meridian/internal/diffing"
 	"github.com/salman-frs/meridian/internal/graph"
@@ -26,6 +27,7 @@ type RunService struct {
 }
 
 type runInputs struct {
+	configSources []string
 	config        model.ConfigModel
 	envValues     map[string]string
 	loadDuration  time.Duration
@@ -57,10 +59,10 @@ func loadConfig(global *GlobalOptions) (model.ConfigModel, error) {
 		return model.ConfigModel{}, &model.ExitError{Code: 2, Err: err}
 	}
 	cfg, err := configio.LoadConfig(configio.LoadOptions{
-		ConfigPath: global.ConfigPath,
-		ConfigDir:  global.ConfigDir,
-		EnvFile:    global.EnvFile,
-		EnvInline:  global.EnvInline,
+		ConfigPaths: configSources(global),
+		ConfigDir:   global.ConfigDir,
+		EnvFile:     global.EnvFile,
+		EnvInline:   global.EnvInline,
 	})
 	if err != nil {
 		return model.ConfigModel{}, &model.ExitError{Code: 2, Err: err}
@@ -103,7 +105,7 @@ func (s RunService) Execute(global *GlobalOptions, runtimeOpts *RuntimeOptions, 
 
 	result := model.RunResult{
 		RunID:          runID,
-		ConfigPath:     inputs.config.PrimarySourcePath(),
+		ConfigPath:     primaryConfigSource(inputs.configSources),
 		Status:         "PASS",
 		Engine:         prep.engine.Engine(),
 		RuntimeBackend: prep.engine.RuntimeBackend(),
@@ -123,11 +125,20 @@ func (s RunService) Execute(global *GlobalOptions, runtimeOpts *RuntimeOptions, 
 		Artifacts: prep.artifacts,
 	}
 
+	semanticStart := s.now()
+	semanticResult, err := s.runSemanticValidation(global, inputs, prep.engine)
+	if err != nil {
+		return model.RunResult{}, err
+	}
+	result.Semantic = semanticResult
+	result.Findings = append(result.Findings, semanticResult.Findings...)
+	result.Timings["semantic"] = s.now().Sub(semanticStart).String()
+
 	if err := s.attachDiff(&result, global, runtimeOpts, includeDiff); err != nil {
 		return model.RunResult{}, err
 	}
 
-	if shouldFail(staticData.findings, "fail") {
+	if shouldFail(result.Findings, "fail") {
 		return s.finishValidationFailure(result)
 	}
 
@@ -136,6 +147,13 @@ func (s RunService) Execute(global *GlobalOptions, runtimeOpts *RuntimeOptions, 
 
 func (s RunService) loadInputs(global *GlobalOptions, runtimeOpts *RuntimeOptions) (runInputs, error) {
 	validatedOpts, err := resolveRuntimeOptions(global, runtimeOpts)
+	if err != nil {
+		return runInputs{}, &model.ExitError{Code: 2, Err: err}
+	}
+	configSources, err := configio.ExpandConfigSources(configio.LoadOptions{
+		ConfigPaths: configSources(global),
+		ConfigDir:   global.ConfigDir,
+	})
 	if err != nil {
 		return runInputs{}, &model.ExitError{Code: 2, Err: err}
 	}
@@ -151,6 +169,7 @@ func (s RunService) loadInputs(global *GlobalOptions, runtimeOpts *RuntimeOption
 	}
 
 	return runInputs{
+		configSources: configSources,
 		config:        cfg,
 		envValues:     envValues,
 		loadDuration:  s.now().Sub(cfgLoadStart),
@@ -255,13 +274,16 @@ func (s RunService) attachDiff(result *model.RunResult, global *GlobalOptions, r
 
 	diffStart := s.now()
 	diffResult, err := diffing.Run(diffing.Options{
-		OldPath:   runtimeOpts.Diff.OldPath,
-		NewPath:   diffNewPath(global, runtimeOpts),
-		BaseRef:   runtimeOpts.Diff.BaseRef,
-		HeadRef:   runtimeOpts.Diff.HeadRef,
-		EnvFile:   global.EnvFile,
-		EnvInline: global.EnvInline,
-		Threshold: runtimeOpts.Diff.Threshold,
+		OldPath:         runtimeOpts.Diff.OldPath,
+		NewPath:         diffNewPath(global, runtimeOpts),
+		BaseRef:         runtimeOpts.Diff.BaseRef,
+		HeadRef:         runtimeOpts.Diff.HeadRef,
+		EnvFile:         global.EnvFile,
+		EnvInline:       global.EnvInline,
+		Threshold:       runtimeOpts.Diff.Threshold,
+		CollectorBinary: global.CollectorBinary,
+		CollectorImage:  runtimeOpts.CollectorImage,
+		Engine:          model.RuntimeEngine(runtimeOpts.Engine),
 	})
 	if err != nil {
 		return &model.ExitError{Code: 2, Err: err}
@@ -384,4 +406,27 @@ func reservePort() (int, error) {
 		return 0, errors.New("failed to allocate a TCP port")
 	}
 	return addr.Port, nil
+}
+
+func (s RunService) runSemanticValidation(global *GlobalOptions, inputs runInputs, engine runtime.ResolvedEngine) (model.SemanticReport, error) {
+	report, err := collector.Analyze(collector.Options{
+		ConfigSources:   inputs.configSources,
+		ConfigModel:     inputs.config,
+		CollectorBinary: global.CollectorBinary,
+		CollectorImage:  inputs.validatedOpts.CollectorImage,
+		Engine:          model.RuntimeEngine(inputs.validatedOpts.Engine),
+		ResolvedEngine:  engine,
+		RequireSemantic: true,
+	})
+	if err != nil {
+		return model.SemanticReport{}, &model.ExitError{Code: 3, Err: err}
+	}
+	return report, nil
+}
+
+func primaryConfigSource(sources []string) string {
+	if len(sources) == 0 {
+		return ""
+	}
+	return sources[0]
 }

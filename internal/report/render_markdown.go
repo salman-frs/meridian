@@ -19,6 +19,7 @@ func RenderSummaryMarkdown(result model.RunResult) string {
 	b.WriteString(fmt.Sprintf("**Run:** `%s`\n\n", result.StartedAt.Format(time.RFC3339)))
 	b.WriteString("### Summary\n")
 	b.WriteString(fmt.Sprintf("- Validate: %s\n", findingsStatus(result.Findings)))
+	b.WriteString(fmt.Sprintf("- Semantic: %s\n", semanticStatus(result.Semantic)))
 	b.WriteString(fmt.Sprintf("- Graph: %s\n", graphStatus(result)))
 	if len(result.Assertions) == 0 {
 		b.WriteString("- Runtime tests: not executed\n")
@@ -29,8 +30,21 @@ func RenderSummaryMarkdown(result model.RunResult) string {
 	}
 	if len(result.Diff.Changes) > 0 {
 		b.WriteString("\n### What changed (risk highlights)\n")
+		if result.Diff.ComparedEffective {
+			b.WriteString("- Effective config diff was available and used for classification.\n")
+		}
 		for _, change := range topDiffChanges(result.Diff.Changes, 5) {
 			b.WriteString(fmt.Sprintf("- **%s:** %s\n", strings.ToUpper(string(change.Severity)), change.Message))
+		}
+	}
+	if result.Semantic.Enabled {
+		b.WriteString("\n### Semantic validation\n")
+		for _, stage := range result.Semantic.Stages {
+			line := fmt.Sprintf("- %s: %s", stage.Name, stage.Status)
+			if stage.Message != "" {
+				line += " (" + stage.Message + ")"
+			}
+			b.WriteString(line + "\n")
 		}
 	}
 	if failure := topFailure(result); failure != "" {
@@ -159,9 +173,33 @@ func ciArtifactNames(result model.RunResult) []string {
 	if result.Artifacts.GraphSVG != "" {
 		names = append(names, "graph.svg")
 	}
+	if result.Semantic.Enabled {
+		if result.Artifacts.ComponentsJSON != "" {
+			names = append(names, "collector-components.json")
+		}
+		if len(result.Semantic.Findings) > 0 {
+			names = append(names, "semantic-findings.json")
+		}
+		if strings.TrimSpace(result.Semantic.FinalConfig) != "" {
+			names = append(names, "config.final.yaml")
+		}
+	}
 	if len(result.Diff.Changes) > 0 {
 		names = append(names, "diff.md")
 	}
 	names = append(names, "captures/")
 	return names
+}
+
+func semanticStatus(report model.SemanticReport) string {
+	if !report.Enabled {
+		if report.SkippedReason == "" {
+			return "SKIP"
+		}
+		return "SKIP (" + report.SkippedReason + ")"
+	}
+	if report.Status == "" {
+		return "PASS"
+	}
+	return report.Status
 }

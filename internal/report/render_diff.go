@@ -12,6 +12,9 @@ func RenderDiff(diff model.DiffResult) string {
 		return "No diff findings."
 	}
 	lines := []string{"Diff findings:"}
+	if diff.ComparedEffective {
+		lines = append(lines, "- using effective collector config rendered via print-config")
+	}
 	for _, change := range diff.Changes {
 		lines = append(lines, fmt.Sprintf("- [%s] %s", strings.ToUpper(string(change.Severity)), change.Message))
 		if change.ReviewHint != "" {

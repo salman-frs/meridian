@@ -28,6 +28,23 @@ func renderFindings(findings []model.Finding) string {
 	return strings.Join(lines, "\n")
 }
 
+func renderValidationReport(findings []model.Finding, localStage model.SemanticStage, semantic model.SemanticReport) string {
+	lines := []string{"Validation stages:"}
+	lines = append(lines, "- local-load: "+localStage.Status+stageMessage(localStage.Message))
+	if semantic.Enabled || semantic.SkippedReason != "" || len(semantic.Stages) > 0 {
+		if semantic.Enabled {
+			lines = append(lines, "- semantic: "+semantic.Status+stageMessage(semantic.Target))
+		} else {
+			lines = append(lines, "- semantic: SKIP"+stageMessage(semantic.SkippedReason))
+		}
+		for _, stage := range semantic.Stages {
+			lines = append(lines, "- semantic/"+stage.Name+": "+stage.Status+stageMessage(stage.Message))
+		}
+	}
+	lines = append(lines, "", renderFindings(findings))
+	return strings.Join(lines, "\n")
+}
+
 func summarizeFindings(findings []model.Finding) map[string]int {
 	summary := map[string]int{"info": 0, "warn": 0, "fail": 0}
 	for _, finding := range findings {
@@ -80,4 +97,11 @@ func printCaptureDir(path string) error {
 		fmt.Printf("== %s ==\n%s\n", entry.Name(), string(data))
 	}
 	return nil
+}
+
+func stageMessage(message string) string {
+	if strings.TrimSpace(message) == "" {
+		return ""
+	}
+	return " (" + strings.TrimSpace(message) + ")"
 }

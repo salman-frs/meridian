@@ -64,3 +64,43 @@ func TestParseThresholdFallsBackToLow(t *testing.T) {
 		t.Fatalf("parseThreshold() = %q, want %q", got, model.SeverityInfo)
 	}
 }
+
+func TestServiceTelemetryChanges(t *testing.T) {
+	t.Parallel()
+
+	oldCfg := model.ConfigModel{Raw: map[string]any{
+		"service": map[string]any{
+			"telemetry": map[string]any{"metrics": map[string]any{"level": "basic"}},
+		},
+	}}
+	newCfg := model.ConfigModel{Raw: map[string]any{
+		"service": map[string]any{
+			"telemetry": map[string]any{"metrics": map[string]any{"level": "detailed"}},
+		},
+	}}
+
+	changes := serviceTelemetryChanges(oldCfg, newCfg)
+	if len(changes) != 1 || changes[0].Kind != "service-telemetry-changed" {
+		t.Fatalf("serviceTelemetryChanges() = %#v", changes)
+	}
+}
+
+func TestNestedComponentChanges(t *testing.T) {
+	t.Parallel()
+
+	oldCfg := model.ConfigModel{
+		Exporters: map[string]model.Component{
+			"otlp": {Name: "otlp", Config: map[string]any{"tls": map[string]any{"insecure": false}}},
+		},
+	}
+	newCfg := model.ConfigModel{
+		Exporters: map[string]model.Component{
+			"otlp": {Name: "otlp", Config: map[string]any{"tls": map[string]any{"insecure": true}}},
+		},
+	}
+
+	changes := nestedComponentChanges("tls", oldCfg, newCfg)
+	if len(changes) != 1 || changes[0].Kind != "exporter-tls-changed" {
+		t.Fatalf("nestedComponentChanges() = %#v", changes)
+	}
+}

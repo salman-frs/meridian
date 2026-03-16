@@ -3,8 +3,10 @@ package configio
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -13,15 +15,27 @@ import (
 )
 
 type LoadOptions struct {
-	ConfigPath string
-	ConfigDir  string
-	EnvFile    string
-	EnvInline  []string
+	ConfigPaths []string
+	ConfigPath  string
+	ConfigDir   string
+	EnvFile     string
+	EnvInline   []string
 }
 
+var (
+	ErrNoConfigSources     = errors.New("either --config or --config-dir is required")
+	ErrNoLocalConfigSource = errors.New("no local YAML config sources were provided")
+	configURIPrefix        = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
+)
+
 func LoadConfig(opts LoadOptions) (model.ConfigModel, error) {
-	if opts.ConfigPath == "" && opts.ConfigDir == "" {
-		return model.ConfigModel{}, errors.New("either --config or --config-dir is required")
+	sources, err := ExpandConfigSources(opts)
+	if err != nil {
+		return model.ConfigModel{}, err
+	}
+	localSources := LocalConfigSources(sources)
+	if len(localSources) == 0 {
+		return model.ConfigModel{SourcePaths: sources}, ErrNoLocalConfigSource
 	}
 
 	env, err := LoadEnv(opts.EnvFile, opts.EnvInline, true)
@@ -30,42 +44,9 @@ func LoadConfig(opts LoadOptions) (model.ConfigModel, error) {
 	}
 
 	merged := map[string]any{}
-	sourcePaths := []string{}
-	if opts.ConfigPath != "" {
-		content, err := os.ReadFile(opts.ConfigPath)
-		if err != nil {
-			return model.ConfigModel{}, err
-		}
-		doc, refs, missing, err := parseYAMLDocument(opts.ConfigPath, string(content), env)
-		if err != nil {
-			return model.ConfigModel{}, err
-		}
-		merged = mergeMaps(merged, doc)
-		sourcePaths = append(sourcePaths, opts.ConfigPath)
-		cfg := normalizeConfig(sourcePaths, merged)
-		cfg.EnvReferences = append(cfg.EnvReferences, refs...)
-		cfg.MissingEnvNames = append(cfg.MissingEnvNames, missing...)
-		return dedupeEnv(cfg), nil
-	}
-
-	entries, err := os.ReadDir(opts.ConfigDir)
-	if err != nil {
-		return model.ConfigModel{}, err
-	}
-	paths := []string{}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
-			paths = append(paths, filepath.Join(opts.ConfigDir, name))
-		}
-	}
-	sort.Strings(paths)
 	allRefs := []model.EnvReference{}
 	allMissing := []string{}
-	for _, path := range paths {
+	for _, path := range localSources {
 		content, err := os.ReadFile(path)
 		if err != nil {
 			return model.ConfigModel{}, err
@@ -75,13 +56,62 @@ func LoadConfig(opts LoadOptions) (model.ConfigModel, error) {
 			return model.ConfigModel{}, err
 		}
 		merged = mergeMaps(merged, doc)
-		sourcePaths = append(sourcePaths, path)
 		allRefs = append(allRefs, refs...)
 		allMissing = append(allMissing, missing...)
 	}
-	cfg := normalizeConfig(sourcePaths, merged)
+	cfg := normalizeConfig(sources, merged)
 	cfg.EnvReferences = allRefs
 	cfg.MissingEnvNames = allMissing
+	return dedupeEnv(cfg), nil
+}
+
+func ExpandConfigSources(opts LoadOptions) ([]string, error) {
+	sources := append([]string{}, opts.ConfigPaths...)
+	if len(sources) == 0 && opts.ConfigPath != "" {
+		sources = append(sources, opts.ConfigPath)
+	}
+	if opts.ConfigDir != "" {
+		entries, err := os.ReadDir(opts.ConfigDir)
+		if err != nil {
+			return nil, err
+		}
+		paths := []string{}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
+				paths = append(paths, filepath.Join(opts.ConfigDir, name))
+			}
+		}
+		sort.Strings(paths)
+		sources = append(sources, paths...)
+	}
+	if len(sources) == 0 {
+		return nil, ErrNoConfigSources
+	}
+	return sources, nil
+}
+
+func LocalConfigSources(sources []string) []string {
+	out := make([]string, 0, len(sources))
+	for _, source := range sources {
+		if path, ok := localConfigPath(source); ok {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+func LoadConfigText(source string, content string) (model.ConfigModel, error) {
+	doc, refs, missing, err := parseYAMLDocument(source, content, map[string]string{})
+	if err != nil {
+		return model.ConfigModel{}, err
+	}
+	cfg := normalizeConfig([]string{source}, doc)
+	cfg.EnvReferences = refs
+	cfg.MissingEnvNames = missing
 	return dedupeEnv(cfg), nil
 }
 
@@ -234,4 +264,22 @@ func dedupeEnv(cfg model.ConfigModel) model.ConfigModel {
 	}
 	sort.Strings(cfg.MissingEnvNames)
 	return cfg
+}
+
+func localConfigPath(source string) (string, bool) {
+	if !isConfigURI(source) {
+		return source, true
+	}
+	parsed, err := url.Parse(source)
+	if err != nil || parsed.Scheme != "file" {
+		return "", false
+	}
+	if parsed.Path == "" {
+		return "", false
+	}
+	return parsed.Path, true
+}
+
+func isConfigURI(source string) bool {
+	return configURIPrefix.MatchString(source)
 }

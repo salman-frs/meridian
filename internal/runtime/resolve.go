@@ -1,6 +1,10 @@
 package runtime
 
-import "github.com/salman-frs/meridian/internal/model"
+import (
+	"os/exec"
+
+	"github.com/salman-frs/meridian/internal/model"
+)
 
 type ResolvedEngine struct {
 	adapter engineAdapter
@@ -41,4 +45,18 @@ func (r ResolvedEngine) CaptureEndpoint(address string, capturePort int) string 
 
 func (r ResolvedEngine) adapterOrNil() engineAdapter {
 	return r.adapter
+}
+
+func (r ResolvedEngine) Command(args ...string) *exec.Cmd {
+	if r.adapter == nil {
+		return nil
+	}
+	return r.adapter.Command(args...)
+}
+
+func (r ResolvedEngine) CommandLabel() string {
+	if r.adapter == nil {
+		return ""
+	}
+	return r.adapter.CommandLabel()
 }

@@ -90,3 +90,17 @@ func TestResolveRuntimeOptionsReturnsTypedValues(t *testing.T) {
 		t.Fatalf("resolveRuntimeOptions() = %#v", resolved)
 	}
 }
+
+func TestConfigSourcesPrefersRepeatedFlagValues(t *testing.T) {
+	t.Parallel()
+
+	global := &GlobalOptions{
+		ConfigPaths: []string{"one.yaml", "two.yaml"},
+		ConfigPath:  "ignored.yaml",
+	}
+
+	got := configSources(global)
+	if len(got) != 2 || got[0] != "one.yaml" || got[1] != "two.yaml" {
+		t.Fatalf("configSources() = %#v", got)
+	}
+}

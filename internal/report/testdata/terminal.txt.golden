@@ -5,10 +5,16 @@ Engine: docker
 Runtime backend: docker
 Mode: safe
 Collector image: otel/test:latest
+Semantic validation: PASS
 Artifacts: 
 
 What changed (risk highlights):
 - [FAIL] pipeline wiring changed
+
+Semantic validation:
+- components: PASS
+- validate: PASS
+- print-config: PASS
 
 Runtime assertions:
 - traces-received: FAIL (received at least one item observed 0 expected >=1)
@@ -24,6 +30,8 @@ Artifacts:
 - 
 - 
 - /tmp/graph.svg
+- /tmp/collector-components.json
+- /tmp/config.final.yaml
 - 
 - 
 - 

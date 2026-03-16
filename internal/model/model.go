@@ -125,9 +125,12 @@ type DiffChange struct {
 }
 
 type DiffResult struct {
-	OldConfig string       `json:"old_config,omitempty" yaml:"old_config,omitempty"`
-	NewConfig string       `json:"new_config,omitempty" yaml:"new_config,omitempty"`
-	Changes   []DiffChange `json:"changes" yaml:"changes"`
+	OldConfig          string       `json:"old_config,omitempty" yaml:"old_config,omitempty"`
+	NewConfig          string       `json:"new_config,omitempty" yaml:"new_config,omitempty"`
+	ComparedEffective  bool         `json:"compared_effective_config,omitempty" yaml:"compared_effective_config,omitempty"`
+	OldEffectiveConfig string       `json:"old_effective_config,omitempty" yaml:"old_effective_config,omitempty"`
+	NewEffectiveConfig string       `json:"new_effective_config,omitempty" yaml:"new_effective_config,omitempty"`
+	Changes            []DiffChange `json:"changes" yaml:"changes"`
 }
 
 type RuntimeMode string
@@ -211,6 +214,7 @@ type RunResult struct {
 	Findings       []Finding         `json:"findings,omitempty" yaml:"findings,omitempty"`
 	Diff           DiffResult        `json:"diff,omitempty" yaml:"diff,omitempty"`
 	Graph          GraphModel        `json:"graph,omitempty" yaml:"graph,omitempty"`
+	Semantic       SemanticReport    `json:"semantic,omitempty" yaml:"semantic,omitempty"`
 	Plan           TestPlan          `json:"plan,omitempty" yaml:"plan,omitempty"`
 	Assertions     []AssertionResult `json:"assertions,omitempty" yaml:"assertions,omitempty"`
 	Captures       []SignalCapture   `json:"captures,omitempty" yaml:"captures,omitempty"`
@@ -220,15 +224,45 @@ type RunResult struct {
 }
 
 type ArtifactManifest struct {
-	RunDir        string `json:"run_dir" yaml:"run_dir"`
-	ReportJSON    string `json:"report_json" yaml:"report_json"`
-	SummaryMD     string `json:"summary_md" yaml:"summary_md"`
-	GraphMMD      string `json:"graph_mmd" yaml:"graph_mmd"`
-	GraphSVG      string `json:"graph_svg,omitempty" yaml:"graph_svg,omitempty"`
-	CollectorLog  string `json:"collector_log" yaml:"collector_log"`
-	PatchedConfig string `json:"patched_config" yaml:"patched_config"`
-	CapturesDir   string `json:"captures_dir" yaml:"captures_dir"`
-	DiffMD        string `json:"diff_md,omitempty" yaml:"diff_md,omitempty"`
+	RunDir         string `json:"run_dir" yaml:"run_dir"`
+	ReportJSON     string `json:"report_json" yaml:"report_json"`
+	SummaryMD      string `json:"summary_md" yaml:"summary_md"`
+	GraphMMD       string `json:"graph_mmd" yaml:"graph_mmd"`
+	GraphSVG       string `json:"graph_svg,omitempty" yaml:"graph_svg,omitempty"`
+	CollectorLog   string `json:"collector_log" yaml:"collector_log"`
+	PatchedConfig  string `json:"patched_config" yaml:"patched_config"`
+	FinalConfig    string `json:"final_config,omitempty" yaml:"final_config,omitempty"`
+	CapturesDir    string `json:"captures_dir" yaml:"captures_dir"`
+	ComponentsJSON string `json:"components_json,omitempty" yaml:"components_json,omitempty"`
+	SemanticJSON   string `json:"semantic_json,omitempty" yaml:"semantic_json,omitempty"`
+	DiffMD         string `json:"diff_md,omitempty" yaml:"diff_md,omitempty"`
+}
+
+type SemanticStage struct {
+	Name    string `json:"name" yaml:"name"`
+	Status  string `json:"status" yaml:"status"`
+	Message string `json:"message,omitempty" yaml:"message,omitempty"`
+}
+
+type CollectorComponent struct {
+	Kind      string `json:"kind" yaml:"kind"`
+	Name      string `json:"name" yaml:"name"`
+	Stability string `json:"stability,omitempty" yaml:"stability,omitempty"`
+	Raw       string `json:"raw,omitempty" yaml:"raw,omitempty"`
+}
+
+type SemanticReport struct {
+	Enabled       bool                 `json:"enabled" yaml:"enabled"`
+	Status        string               `json:"status,omitempty" yaml:"status,omitempty"`
+	Source        string               `json:"source,omitempty" yaml:"source,omitempty"`
+	Target        string               `json:"target,omitempty" yaml:"target,omitempty"`
+	SkippedReason string               `json:"skipped_reason,omitempty" yaml:"skipped_reason,omitempty"`
+	Stages        []SemanticStage      `json:"stages,omitempty" yaml:"stages,omitempty"`
+	Findings      []Finding            `json:"findings,omitempty" yaml:"findings,omitempty"`
+	Components    []CollectorComponent `json:"components,omitempty" yaml:"components,omitempty"`
+	RawComponents string               `json:"raw_components,omitempty" yaml:"raw_components,omitempty"`
+	FinalConfig   string               `json:"final_config,omitempty" yaml:"final_config,omitempty"`
+	UsedForDiff   bool                 `json:"used_for_diff,omitempty" yaml:"used_for_diff,omitempty"`
 }
 
 type AssertionFile struct {
@@ -267,14 +301,17 @@ type AssertionExpect struct {
 func NewArtifactManifest(baseOutput string, runID string) ArtifactManifest {
 	runDir := filepath.Join(baseOutput, "runs", runID)
 	return ArtifactManifest{
-		RunDir:        runDir,
-		ReportJSON:    filepath.Join(runDir, "report.json"),
-		SummaryMD:     filepath.Join(runDir, "summary.md"),
-		GraphMMD:      filepath.Join(runDir, "graph.mmd"),
-		CollectorLog:  filepath.Join(runDir, "collector.log"),
-		PatchedConfig: filepath.Join(runDir, "config.patched.yaml"),
-		CapturesDir:   filepath.Join(runDir, "captures"),
-		DiffMD:        filepath.Join(runDir, "diff.md"),
+		RunDir:         runDir,
+		ReportJSON:     filepath.Join(runDir, "report.json"),
+		SummaryMD:      filepath.Join(runDir, "summary.md"),
+		GraphMMD:       filepath.Join(runDir, "graph.mmd"),
+		CollectorLog:   filepath.Join(runDir, "collector.log"),
+		PatchedConfig:  filepath.Join(runDir, "config.patched.yaml"),
+		FinalConfig:    filepath.Join(runDir, "config.final.yaml"),
+		CapturesDir:    filepath.Join(runDir, "captures"),
+		ComponentsJSON: filepath.Join(runDir, "collector-components.json"),
+		SemanticJSON:   filepath.Join(runDir, "semantic-findings.json"),
+		DiffMD:         filepath.Join(runDir, "diff.md"),
 	}
 }
 

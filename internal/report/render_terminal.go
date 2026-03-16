@@ -16,6 +16,7 @@ func RenderTerminal(result model.RunResult) string {
 		fmt.Sprintf("Runtime backend: %s", valueOrDefault(result.RuntimeBackend, "n/a")),
 		fmt.Sprintf("Mode: %s", result.Mode),
 		fmt.Sprintf("Collector image: %s", result.CollectorImage),
+		fmt.Sprintf("Semantic validation: %s", semanticStatus(result.Semantic)),
 		fmt.Sprintf("Artifacts: %s", result.Artifacts.RunDir),
 	}
 	if result.Message != "" {
@@ -31,6 +32,16 @@ func RenderTerminal(result model.RunResult) string {
 		lines = append(lines, "", "Validation:")
 		for _, finding := range result.Findings {
 			lines = append(lines, "- "+model.FormatFinding(finding))
+		}
+	}
+	if result.Semantic.Enabled {
+		lines = append(lines, "", "Semantic validation:")
+		for _, stage := range result.Semantic.Stages {
+			line := fmt.Sprintf("- %s: %s", stage.Name, stage.Status)
+			if stage.Message != "" {
+				line += " (" + stage.Message + ")"
+			}
+			lines = append(lines, line)
 		}
 	}
 	if len(result.Assertions) > 0 {
@@ -63,6 +74,17 @@ func artifactPaths(result model.RunResult) []string {
 	}
 	if result.Artifacts.GraphSVG != "" {
 		paths = append(paths, "- "+result.Artifacts.GraphSVG)
+	}
+	if result.Semantic.Enabled {
+		if result.Artifacts.ComponentsJSON != "" {
+			paths = append(paths, "- "+result.Artifacts.ComponentsJSON)
+		}
+		if strings.TrimSpace(result.Semantic.FinalConfig) != "" {
+			paths = append(paths, "- "+result.Artifacts.FinalConfig)
+		}
+		if len(result.Semantic.Findings) > 0 {
+			paths = append(paths, "- "+result.Artifacts.SemanticJSON)
+		}
 	}
 	paths = append(paths,
 		"- "+result.Artifacts.CollectorLog,

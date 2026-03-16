@@ -5,21 +5,26 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 
+	"github.com/salman-frs/meridian/internal/collector"
 	"github.com/salman-frs/meridian/internal/configio"
 	"github.com/salman-frs/meridian/internal/model"
 )
 
 type Options struct {
-	OldPath   string
-	NewPath   string
-	BaseRef   string
-	HeadRef   string
-	EnvFile   string
-	EnvInline []string
-	Threshold string
+	OldPath         string
+	NewPath         string
+	BaseRef         string
+	HeadRef         string
+	EnvFile         string
+	EnvInline       []string
+	Threshold       string
+	CollectorBinary string
+	CollectorImage  string
+	Engine          model.RuntimeEngine
 }
 
 func Run(opts Options) (model.DiffResult, error) {
@@ -42,6 +47,7 @@ func Run(opts Options) (model.DiffResult, error) {
 	if oldPath == "" || newPath == "" {
 		return model.DiffResult{}, fmt.Errorf("provide --old and --new, or --base/--head with --new")
 	}
+
 	oldCfg, err := configio.LoadConfig(configio.LoadOptions{ConfigPath: oldPath, EnvFile: opts.EnvFile, EnvInline: opts.EnvInline})
 	if err != nil {
 		return model.DiffResult{}, err
@@ -50,17 +56,35 @@ func Run(opts Options) (model.DiffResult, error) {
 	if err != nil {
 		return model.DiffResult{}, err
 	}
-	changes := []model.DiffChange{}
-	changes = append(changes, pipelineChanges(oldCfg, newCfg)...)
-	changes = append(changes, componentChanges("receiver", oldCfg.Receivers, newCfg.Receivers)...)
-	changes = append(changes, componentChanges("exporter", oldCfg.Exporters, newCfg.Exporters)...)
-	changes = append(changes, envChanges(oldCfg, newCfg)...)
-	changes = filterBySeverity(changes, opts.Threshold)
-	return model.DiffResult{
+
+	result := model.DiffResult{
 		OldConfig: oldPath,
 		NewConfig: newPath,
-		Changes:   changes,
-	}, nil
+	}
+
+	compareOld := oldCfg
+	compareNew := newCfg
+	if oldEffective, newEffective, ok := effectiveConfigs(opts, oldPath, newPath, oldCfg, newCfg); ok {
+		compareOld = oldEffective
+		compareNew = newEffective
+		result.ComparedEffective = true
+		result.OldEffectiveConfig = oldPath
+		result.NewEffectiveConfig = newPath
+	}
+
+	changes := []model.DiffChange{}
+	changes = append(changes, pipelineChanges(oldCfg, newCfg)...)
+	changes = append(changes, componentChanges("receiver", compareOld.Receivers, compareNew.Receivers)...)
+	changes = append(changes, componentChanges("processor", compareOld.Processors, compareNew.Processors)...)
+	changes = append(changes, componentChanges("exporter", compareOld.Exporters, compareNew.Exporters)...)
+	changes = append(changes, componentChanges("connector", compareOld.Connectors, compareNew.Connectors)...)
+	changes = append(changes, componentChanges("extension", compareOld.Extensions, compareNew.Extensions)...)
+	changes = append(changes, envChanges(oldCfg, newCfg)...)
+	changes = append(changes, nestedComponentChanges("auth", compareOld, compareNew)...)
+	changes = append(changes, nestedComponentChanges("tls", compareOld, compareNew)...)
+	changes = append(changes, serviceTelemetryChanges(compareOld, compareNew)...)
+	result.Changes = filterBySeverity(changes, opts.Threshold)
+	return result, nil
 }
 
 func Empty() model.DiffResult {
@@ -117,13 +141,16 @@ func componentChanges(kind string, oldItems, newItems map[string]model.Component
 		if oldEndpoint != "" && newEndpoint != "" && oldEndpoint != newEndpoint {
 			changes = append(changes, change(model.SeverityFail, kind+"-endpoint-changed", fmt.Sprintf("%s %q changed endpoint from %s to %s", kind, name, oldEndpoint, newEndpoint), "endpoint changes are high risk and should be validated with runtime tests"))
 		}
+		if !reflect.DeepEqual(oldComponent.Config, newComponent.Config) {
+			changes = append(changes, change(model.SeverityWarn, kind+"-config-changed", fmt.Sprintf("%s %q changed configuration", kind, name), "review the component config diff because behavior may have changed without a wiring change"))
+		}
 	}
 	for name := range newItems {
 		if _, ok := oldItems[name]; !ok {
 			changes = append(changes, change(model.SeverityInfo, kind+"-added", fmt.Sprintf("%s %q was added", kind, name), "confirm it is intentional and referenced by a pipeline"))
 		}
 	}
-	return changes
+	return dedupeChanges(changes)
 }
 
 func envChanges(oldCfg, newCfg model.ConfigModel) []model.DiffChange {
@@ -207,4 +234,88 @@ func parseThreshold(value string) model.Severity {
 	default:
 		return model.SeverityInfo
 	}
+}
+
+func nestedComponentChanges(key string, oldCfg, newCfg model.ConfigModel) []model.DiffChange {
+	changes := []model.DiffChange{}
+	for _, section := range []struct {
+		kind string
+		data map[string]model.Component
+		old  map[string]model.Component
+	}{
+		{kind: "receiver", data: newCfg.Receivers, old: oldCfg.Receivers},
+		{kind: "processor", data: newCfg.Processors, old: oldCfg.Processors},
+		{kind: "exporter", data: newCfg.Exporters, old: oldCfg.Exporters},
+		{kind: "connector", data: newCfg.Connectors, old: oldCfg.Connectors},
+		{kind: "extension", data: newCfg.Extensions, old: oldCfg.Extensions},
+	} {
+		for name, newComponent := range section.data {
+			oldComponent, ok := section.old[name]
+			if !ok {
+				continue
+			}
+			if reflect.DeepEqual(oldComponent.Config[key], newComponent.Config[key]) {
+				continue
+			}
+			changes = append(changes, change(model.SeverityWarn, section.kind+"-"+key+"-changed", fmt.Sprintf("%s %q changed %s settings", section.kind, name, key), key+" settings can change connectivity, auth, or transport behavior"))
+		}
+	}
+	return dedupeChanges(changes)
+}
+
+func serviceTelemetryChanges(oldCfg, newCfg model.ConfigModel) []model.DiffChange {
+	oldService, _ := oldCfg.Raw["service"].(map[string]any)
+	newService, _ := newCfg.Raw["service"].(map[string]any)
+	if reflect.DeepEqual(oldService["telemetry"], newService["telemetry"]) {
+		return nil
+	}
+	return []model.DiffChange{
+		change(model.SeverityWarn, "service-telemetry-changed", "service.telemetry changed", "collector internal telemetry settings changed; review metrics and logs coverage for troubleshooting impact"),
+	}
+}
+
+func dedupeChanges(changes []model.DiffChange) []model.DiffChange {
+	seen := map[string]struct{}{}
+	out := make([]model.DiffChange, 0, len(changes))
+	for _, item := range changes {
+		key := string(item.Severity) + "|" + item.Kind + "|" + item.Message
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, item)
+	}
+	return out
+}
+
+func effectiveConfigs(opts Options, oldPath, newPath string, oldCfg, newCfg model.ConfigModel) (model.ConfigModel, model.ConfigModel, bool) {
+	if opts.CollectorBinary == "" && opts.CollectorImage == "" {
+		return model.ConfigModel{}, model.ConfigModel{}, false
+	}
+	oldFinal, okOld, errOld := collector.ResolveFinalConfig(collector.Options{
+		ConfigSources:   []string{oldPath},
+		ConfigModel:     oldCfg,
+		CollectorBinary: opts.CollectorBinary,
+		CollectorImage:  opts.CollectorImage,
+		Engine:          opts.Engine,
+	})
+	newFinal, okNew, errNew := collector.ResolveFinalConfig(collector.Options{
+		ConfigSources:   []string{newPath},
+		ConfigModel:     newCfg,
+		CollectorBinary: opts.CollectorBinary,
+		CollectorImage:  opts.CollectorImage,
+		Engine:          opts.Engine,
+	})
+	if errOld != nil || errNew != nil || !okOld || !okNew {
+		return model.ConfigModel{}, model.ConfigModel{}, false
+	}
+	oldEffective, err := collector.LoadEffectiveConfig(oldFinal, oldPath+"#print-config")
+	if err != nil {
+		return model.ConfigModel{}, model.ConfigModel{}, false
+	}
+	newEffective, err := collector.LoadEffectiveConfig(newFinal, newPath+"#print-config")
+	if err != nil {
+		return model.ConfigModel{}, model.ConfigModel{}, false
+	}
+	return oldEffective, newEffective, true
 }

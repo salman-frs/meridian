@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/salman-frs/meridian/internal/model"
 )
@@ -11,6 +12,27 @@ import (
 func WriteBundle(result model.RunResult) error {
 	if err := result.Artifacts.Ensure(); err != nil {
 		return err
+	}
+	if result.Semantic.Enabled {
+		if len(result.Semantic.Findings) > 0 {
+			if err := model.WriteJSON(result.Artifacts.SemanticJSON, result.Semantic.Findings); err != nil {
+				return err
+			}
+		}
+		if len(result.Semantic.Components) > 0 || result.Semantic.RawComponents != "" {
+			payload := map[string]any{
+				"components": result.Semantic.Components,
+				"raw":        result.Semantic.RawComponents,
+			}
+			if err := model.WriteJSON(result.Artifacts.ComponentsJSON, payload); err != nil {
+				return err
+			}
+		}
+		if strings.TrimSpace(result.Semantic.FinalConfig) != "" {
+			if err := model.WriteText(result.Artifacts.FinalConfig, result.Semantic.FinalConfig); err != nil {
+				return err
+			}
+		}
 	}
 	if err := model.WriteJSON(result.Artifacts.ReportJSON, result); err != nil {
 		return err

@@ -48,6 +48,37 @@ func TestLoadConfigTracksMissingEnvOnce(t *testing.T) {
 	}
 }
 
+func TestExpandConfigSourcesAppendsConfigDirToRepeatedConfigs(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "10.yaml"), "receivers: {}\n")
+	writeFile(t, filepath.Join(dir, "20.yaml"), "exporters: {}\n")
+
+	sources, err := ExpandConfigSources(LoadOptions{
+		ConfigPaths: []string{"yaml:receivers::"},
+		ConfigDir:   dir,
+	})
+	if err != nil {
+		t.Fatalf("ExpandConfigSources() error = %v", err)
+	}
+	if len(sources) != 3 {
+		t.Fatalf("ExpandConfigSources() len = %d, want 3", len(sources))
+	}
+	if sources[0] != "yaml:receivers::" {
+		t.Fatalf("ExpandConfigSources()[0] = %q, want yaml URI first", sources[0])
+	}
+}
+
+func TestLocalConfigSourcesSupportsFileURI(t *testing.T) {
+	t.Parallel()
+
+	got := LocalConfigSources([]string{"file:/tmp/collector.yaml", "yaml:exporters::"})
+	if len(got) != 1 || got[0] != "/tmp/collector.yaml" {
+		t.Fatalf("LocalConfigSources() = %#v, want [/tmp/collector.yaml]", got)
+	}
+}
+
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

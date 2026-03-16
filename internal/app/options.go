@@ -39,15 +39,22 @@ const (
 )
 
 type GlobalOptions struct {
-	ConfigPath string
-	ConfigDir  string
-	EnvFile    string
-	EnvInline  []string
-	Format     string
-	Output     string
-	Quiet      bool
-	Verbose    bool
-	NoColor    bool
+	ConfigPaths     []string
+	ConfigPath      string
+	ConfigDir       string
+	EnvFile         string
+	EnvInline       []string
+	Format          string
+	Output          string
+	CollectorBinary string
+	Quiet           bool
+	Verbose         bool
+	NoColor         bool
+}
+
+type SemanticOptions struct {
+	Engine         string
+	CollectorImage string
 }
 
 type RuntimeOptions struct {
@@ -112,6 +119,13 @@ func newRuntimeOptions() *RuntimeOptions {
 	}
 }
 
+func newSemanticOptions() *SemanticOptions {
+	return &SemanticOptions{
+		Engine:         string(model.RuntimeEngineAuto),
+		CollectorImage: defaultCollectorImage,
+	}
+}
+
 func addRuntimeFlags(cmd *cobra.Command, opts *RuntimeOptions) {
 	cmd.Flags().StringVar(&opts.Engine, "engine", string(model.RuntimeEngineAuto), "container engine: auto|docker|containerd")
 	cmd.Flags().StringVar(&opts.Mode, "mode", string(model.RuntimeModeSafe), "runtime mode: safe|tee|live")
@@ -137,12 +151,14 @@ func addDiffFlags(cmd *cobra.Command, opts *DiffOptions) {
 	cmd.Flags().StringVar(&opts.Threshold, "severity-threshold", "low", "minimum diff severity threshold: low|medium|high")
 }
 
+func addSemanticFlags(cmd *cobra.Command, opts *SemanticOptions) {
+	cmd.Flags().StringVar(&opts.Engine, "engine", string(model.RuntimeEngineAuto), "container engine used for collector image semantic validation: auto|docker|containerd")
+	cmd.Flags().StringVar(&opts.CollectorImage, "collector-image", defaultCollectorImage, "collector image used when --collector-binary is not provided")
+}
+
 func validateGlobalOptions(global *GlobalOptions) error {
-	if global.ConfigPath == "" && global.ConfigDir == "" {
+	if len(configSources(global)) == 0 && global.ConfigDir == "" {
 		return errors.New("either --config or --config-dir is required")
-	}
-	if global.ConfigPath != "" && global.ConfigDir != "" {
-		return errors.New("use either --config or --config-dir, not both")
 	}
 	_, err := parseOutputFormat(global.Format)
 	return err
@@ -213,7 +229,11 @@ func diffNewPath(global *GlobalOptions, runtimeOpts *RuntimeOptions) string {
 	if runtimeOpts.Diff.NewPath != "" {
 		return runtimeOpts.Diff.NewPath
 	}
-	return global.ConfigPath
+	sources := configSources(global)
+	if len(sources) == 0 {
+		return ""
+	}
+	return sources[0]
 }
 
 func isJSONOutput(global *GlobalOptions) bool {
@@ -264,4 +284,14 @@ func parseGraphOutputRender(value string) (graphOutputRender, error) {
 	default:
 		return "", fmt.Errorf("unsupported --render %q", value)
 	}
+}
+
+func configSources(global *GlobalOptions) []string {
+	if len(global.ConfigPaths) > 0 {
+		return append([]string{}, global.ConfigPaths...)
+	}
+	if global.ConfigPath != "" {
+		return []string{global.ConfigPath}
+	}
+	return nil
 }

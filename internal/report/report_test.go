@@ -21,6 +21,7 @@ func TestRenderSummaryMarkdownIncludesTopFailureAndArtifacts(t *testing.T) {
 		"pipeline wiring",
 		"`graph.svg`",
 		"**Collector image:** `otel/test:latest`",
+		"### Semantic validation",
 	} {
 		if !strings.Contains(out, fragment) {
 			t.Fatalf("RenderSummaryMarkdown() missing %q in:\n%s", fragment, out)
@@ -72,17 +73,31 @@ func sampleRunResult() model.RunResult {
 			},
 		},
 		Diff: model.DiffResult{
-			Changes: []model.DiffChange{{Severity: model.SeverityFail, Message: "pipeline wiring changed"}},
+			ComparedEffective: true,
+			Changes:           []model.DiffChange{{Severity: model.SeverityFail, Message: "pipeline wiring changed"}},
+		},
+		Semantic: model.SemanticReport{
+			Enabled: true,
+			Status:  "PASS",
+			Stages: []model.SemanticStage{
+				{Name: "components", Status: "PASS"},
+				{Name: "validate", Status: "PASS"},
+				{Name: "print-config", Status: "PASS"},
+			},
+			FinalConfig: "service:\n  pipelines: {}\n",
 		},
 		Graph: model.GraphModel{
 			Nodes: []model.GraphNode{{ID: "pipeline-traces", Label: "traces"}},
 		},
 		Artifacts: model.ArtifactManifest{
-			ReportJSON: "",
-			SummaryMD:  "",
-			GraphMMD:   "",
-			GraphSVG:   "/tmp/graph.svg",
-			DiffMD:     "",
+			ReportJSON:     "",
+			SummaryMD:      "",
+			GraphMMD:       "",
+			GraphSVG:       "/tmp/graph.svg",
+			FinalConfig:    "/tmp/config.final.yaml",
+			ComponentsJSON: "/tmp/collector-components.json",
+			SemanticJSON:   "/tmp/semantic-findings.json",
+			DiffMD:         "",
 		},
 	}
 }

@@ -18,12 +18,13 @@ func NewRootCommand() *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
-	root.PersistentFlags().StringVarP(&opts.ConfigPath, "config", "c", "", "path to collector config YAML")
+	root.PersistentFlags().StringArrayVarP(&opts.ConfigPaths, "config", "c", nil, "collector config source; repeatable and may be a file path or collector config URI")
 	root.PersistentFlags().StringVar(&opts.ConfigDir, "config-dir", "", "path to a rendered collector config directory")
 	root.PersistentFlags().StringVar(&opts.EnvFile, "env-file", "", "dotenv file used for config interpolation")
 	root.PersistentFlags().StringArrayVar(&opts.EnvInline, "env", nil, "inline KEY=VALUE env vars")
 	root.PersistentFlags().StringVar(&opts.Format, "format", "human", "output format: human|json")
 	root.PersistentFlags().StringVar(&opts.Output, "output", defaultOutputDir, "artifact output directory")
+	root.PersistentFlags().StringVar(&opts.CollectorBinary, "collector-binary", "", "path to a collector binary used for semantic validation")
 	root.PersistentFlags().BoolVar(&opts.Quiet, "quiet", false, "suppress human progress output")
 	root.PersistentFlags().BoolVar(&opts.Verbose, "verbose", false, "enable verbose output")
 	root.PersistentFlags().BoolVar(&opts.NoColor, "no-color", false, "disable colorized output")
