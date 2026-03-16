@@ -77,7 +77,26 @@ jobs:
           git fetch origin gh-pages --depth=1 || true
 
       - name: Deploy dev docs
-        run: mike deploy --push dev
+        run: |
+          mike deploy --push dev
+          python - <<'PY'
+          import re
+          import subprocess
+
+          output = subprocess.run(["mike", "list"], check=True, capture_output=True, text=True).stdout
+          has_release_or_latest = False
+          for line in output.splitlines():
+              fields = line.strip().split()
+              if not fields:
+                  continue
+              name = fields[0]
+              if name == "latest" or re.fullmatch(r"\d+\.\d+", name):
+                  has_release_or_latest = True
+                  break
+
+          default_version = "latest" if has_release_or_latest else "dev"
+          subprocess.run(["mike", "set-default", "--push", default_version], check=True)
+          PY
 
   deploy-release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
