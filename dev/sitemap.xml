@@ -5,51 +5,143 @@
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/concepts/artifacts/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/architecture/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/concepts/diff-review/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/architecture/ci-and-docs-publishing/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/concepts/k3s-fixture/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/architecture/execution-pipeline/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/concepts/runtime-engines/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/architecture/package-map/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/concepts/runtime-modes/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/architecture/reporting-and-artifacts/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/concepts/semantic-validation/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/architecture/system-architecture/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/contribute/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/core-concepts/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/contribute/docs/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/core-concepts/artifact-model/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/contribute/releases/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/core-concepts/config-source-model/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/overview/install/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/core-concepts/evidence-model/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/overview/quickstart/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/core-concepts/runtime-engine-model/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/overview/releases/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/core-concepts/runtime-modes-and-patching/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/core-concepts/semantic-validation/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/features/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/features/assertions-and-contracts/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/features/debug-commands/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/features/diff/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/features/github-action/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/features/graph/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/features/k3s-fixture/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/features/runtime-commands/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/features/validate/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/getting-started/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/getting-started/first-ci-setup/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/getting-started/first-local-run/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/getting-started/install/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/getting-started/quickstart/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/overview/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/overview/goals-and-non-goals/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/overview/main-features/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/overview/users-and-use-cases/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/project/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/project/contributing/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/project/docs-authoring/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/project/release-docs/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
@@ -62,6 +154,10 @@
     </url>
     <url>
          <loc>https://salman-frs.github.io/meridian/dev/reference/artifact-contract/</loc>
+         <lastmod>2026-03-16</lastmod>
+    </url>
+    <url>
+         <loc>https://salman-frs.github.io/meridian/dev/reference/cli-overview/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
@@ -137,43 +233,23 @@
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/tasks/assertions-contracts/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/workflows/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/tasks/container-engines/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/workflows/ci-maintainer/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/tasks/debug-failures/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/workflows/local-authoring/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/tasks/diff-a-change/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/workflows/maintainer-regression/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
     <url>
-         <loc>https://salman-frs.github.io/meridian/dev/tasks/first-run/</loc>
-         <lastmod>2026-03-16</lastmod>
-    </url>
-    <url>
-         <loc>https://salman-frs.github.io/meridian/dev/tasks/github-action/</loc>
-         <lastmod>2026-03-16</lastmod>
-    </url>
-    <url>
-         <loc>https://salman-frs.github.io/meridian/dev/tasks/inspect-artifacts/</loc>
-         <lastmod>2026-03-16</lastmod>
-    </url>
-    <url>
-         <loc>https://salman-frs.github.io/meridian/dev/tutorials/k3s-regression/</loc>
-         <lastmod>2026-03-16</lastmod>
-    </url>
-    <url>
-         <loc>https://salman-frs.github.io/meridian/dev/tutorials/local-validation/</loc>
-         <lastmod>2026-03-16</lastmod>
-    </url>
-    <url>
-         <loc>https://salman-frs.github.io/meridian/dev/tutorials/pull-request-flow/</loc>
+         <loc>https://salman-frs.github.io/meridian/dev/workflows/reviewer-pull-request/</loc>
          <lastmod>2026-03-16</lastmod>
     </url>
 </urlset>
