@@ -2,14 +2,12 @@ package assert
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/salman-frs/meridian/internal/capture"
 	"github.com/salman-frs/meridian/internal/model"
-	"gopkg.in/yaml.v3"
 )
 
 func Evaluate(sink *capture.InMemorySink, captures []model.SignalCapture, custom []model.AssertionSpec, plan model.TestPlan) []model.AssertionResult {
@@ -78,25 +76,6 @@ func Evaluate(sink *capture.InMemorySink, captures []model.SignalCapture, custom
 		results = append(results, evaluateCustom(spec, captures, plan.RunID))
 	}
 	return results
-}
-
-func LoadCustomAssertions(path string, runID string) ([]model.AssertionSpec, error) {
-	if path == "" {
-		return nil, nil
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var file model.AssertionFile
-	if err := yaml.Unmarshal(data, &file); err != nil {
-		return nil, err
-	}
-	assertions := make([]model.AssertionSpec, 0, len(file.Assertions))
-	for _, spec := range file.Assertions {
-		assertions = append(assertions, applyDefaults(spec, file.Defaults, runID))
-	}
-	return assertions, nil
 }
 
 func evaluateCustom(spec model.AssertionSpec, captures []model.SignalCapture, runID string) model.AssertionResult {

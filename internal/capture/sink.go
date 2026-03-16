@@ -33,11 +33,12 @@ type InMemorySink struct {
 }
 
 type signalState struct {
-	count      int
-	samples    []map[string]any
-	firstSeen  time.Time
-	lastSeen   time.Time
-	truncated  bool
+	count     int
+	samples   []map[string]any
+	entries   []model.NormalizedTelemetry
+	firstSeen time.Time
+	lastSeen  time.Time
+	truncated bool
 }
 
 func NewInMemorySink(runID string, capturesDir string, sampleLimit int) *InMemorySink {
@@ -108,8 +109,9 @@ func (t *traceServer) Export(ctx context.Context, req *collecttrace.ExportTraceS
 					"resource":   resourceAttrs,
 					"attributes": attrs(span.Attributes),
 					"run_id":     findRunID(resourceAttrs, attrs(span.Attributes)),
+					"fixture":    findFixture(resourceAttrs, attrs(span.Attributes)),
 				}
-				s.record(&s.traces, entry)
+				s.record(model.SignalTraces, &s.traces, entry)
 			}
 		}
 	}
@@ -124,7 +126,7 @@ func (m *metricsServer) Export(ctx context.Context, req *collectmetrics.ExportMe
 		resourceAttrs := attrs(resourceMetrics.Resource.Attributes)
 		for _, scopeMetrics := range resourceMetrics.ScopeMetrics {
 			for _, metric := range scopeMetrics.Metrics {
-				s.record(&s.metrics, metricEntry(resourceAttrs, metric))
+				s.record(model.SignalMetrics, &s.metrics, metricEntry(resourceAttrs, metric))
 			}
 		}
 	}
@@ -139,7 +141,7 @@ func (l *logsServer) Export(ctx context.Context, req *collectlogs.ExportLogsServ
 		resourceAttrs := attrs(resourceLogs.Resource.Attributes)
 		for _, scopeLogs := range resourceLogs.ScopeLogs {
 			for _, logRecord := range scopeLogs.LogRecords {
-				s.record(&s.logs, logEntry(resourceAttrs, logRecord))
+				s.record(model.SignalLogs, &s.logs, logEntry(resourceAttrs, logRecord))
 			}
 		}
 	}
@@ -190,11 +192,25 @@ func (s *InMemorySink) Persist() error {
 	return nil
 }
 
+func (s *InMemorySink) PersistNormalized(path string) error {
+	return model.WriteJSON(path, s.Normalized())
+}
+
 func (s *InMemorySink) GetRunID() string {
 	return s.runID
 }
 
-func (s *InMemorySink) record(state *signalState, entry map[string]any) {
+func (s *InMemorySink) Normalized() []model.NormalizedTelemetry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]model.NormalizedTelemetry, 0, len(s.traces.entries)+len(s.metrics.entries)+len(s.logs.entries))
+	out = append(out, s.traces.entries...)
+	out = append(out, s.metrics.entries...)
+	out = append(out, s.logs.entries...)
+	return out
+}
+
+func (s *InMemorySink) record(signal model.SignalType, state *signalState, entry map[string]any) {
 	now := time.Now().UTC()
 	state.count++
 	if state.firstSeen.IsZero() {
@@ -202,6 +218,7 @@ func (s *InMemorySink) record(state *signalState, entry map[string]any) {
 	}
 	state.lastSeen = now
 	entry["received_at"] = now.Format(time.RFC3339Nano)
+	state.entries = append(state.entries, normalizeEntry(signal, entry, now))
 	if len(state.samples) < s.sampleLimit {
 		state.samples = append(state.samples, entry)
 		return
@@ -240,12 +257,25 @@ func metricEntry(resource map[string]any, metric *metricsv1.Metric) map[string]a
 		"resource":    resource,
 		"metric_name": metric.Name,
 		"run_id":      resource["meridian.run_id"],
+		"fixture":     findFixture(resource),
 	}
 	if gauge := metric.GetGauge(); gauge != nil && len(gauge.DataPoints) > 0 {
 		entry["attributes"] = attrs(gauge.DataPoints[0].Attributes)
+		value := metricPointValue(gauge.DataPoints[0])
+		if value != nil {
+			entry["metric_value"] = *value
+		}
 	}
 	if sum := metric.GetSum(); sum != nil && len(sum.DataPoints) > 0 {
 		entry["attributes"] = attrs(sum.DataPoints[0].Attributes)
+		value := metricPointValue(sum.DataPoints[0])
+		if value != nil {
+			entry["metric_value"] = *value
+		}
+		entry["fixture"] = findFixture(resource, attrs(sum.DataPoints[0].Attributes))
+	}
+	if gauge := metric.GetGauge(); gauge != nil && len(gauge.DataPoints) > 0 {
+		entry["fixture"] = findFixture(resource, attrs(gauge.DataPoints[0].Attributes))
 	}
 	return entry
 }
@@ -256,6 +286,7 @@ func logEntry(resource map[string]any, record *logsv1.LogRecord) map[string]any 
 		"body":       anyValue(record.Body),
 		"attributes": attrs(record.Attributes),
 		"run_id":     findRunID(resource, attrs(record.Attributes)),
+		"fixture":    findFixture(resource, attrs(record.Attributes)),
 	}
 }
 
@@ -266,4 +297,63 @@ func findRunID(maps ...map[string]any) any {
 		}
 	}
 	return nil
+}
+
+func findFixture(maps ...map[string]any) any {
+	for _, m := range maps {
+		if value, ok := m["meridian.fixture"]; ok {
+			return value
+		}
+	}
+	return nil
+}
+
+func metricPointValue(point *metricsv1.NumberDataPoint) *float64 {
+	switch point.Value.(type) {
+	case *metricsv1.NumberDataPoint_AsDouble:
+		value := point.GetAsDouble()
+		return &value
+	case *metricsv1.NumberDataPoint_AsInt:
+		value := float64(point.GetAsInt())
+		return &value
+	default:
+		return nil
+	}
+}
+
+func normalizeEntry(signal model.SignalType, entry map[string]any, receivedAt time.Time) model.NormalizedTelemetry {
+	item := model.NormalizedTelemetry{
+		Signal:     signal,
+		RunID:      toString(entry["run_id"]),
+		Fixture:    toString(entry["fixture"]),
+		SpanName:   toString(entry["span_name"]),
+		MetricName: toString(entry["metric_name"]),
+		Body:       toString(entry["body"]),
+		Resource:   mapValue(entry["resource"]),
+		Attributes: mapValue(entry["attributes"]),
+		ReceivedAt: receivedAt,
+	}
+	if value, ok := entry["metric_value"].(float64); ok {
+		item.MetricValue = &value
+	}
+	return item
+}
+
+func mapValue(v any) map[string]any {
+	out, _ := v.(map[string]any)
+	if out == nil {
+		return nil
+	}
+	return out
+}
+
+func toString(v any) string {
+	switch typed := v.(type) {
+	case string:
+		return typed
+	case nil:
+		return ""
+	default:
+		return fmt.Sprint(typed)
+	}
 }

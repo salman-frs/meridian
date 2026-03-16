@@ -18,10 +18,11 @@ func TestRenderSummaryMarkdownIncludesTopFailureAndArtifacts(t *testing.T) {
 	out := RenderSummaryMarkdown(result)
 	for _, fragment := range []string{
 		"### Top failure",
-		"pipeline wiring",
+		"redaction contract",
 		"`graph.svg`",
 		"**Collector image:** `otel/test:latest`",
 		"### Semantic validation",
+		"### Contract checks",
 	} {
 		if !strings.Contains(out, fragment) {
 			t.Fatalf("RenderSummaryMarkdown() missing %q in:\n%s", fragment, out)
@@ -72,6 +73,21 @@ func sampleRunResult() model.RunResult {
 				NextSteps:    []string{"open collector.log"},
 			},
 		},
+		Contracts: []model.ContractResult{
+			{
+				ID:           "redaction-contract",
+				Severity:     model.SeverityFail,
+				Signal:       model.SignalTraces,
+				Fixture:      "redaction",
+				Status:       "FAIL",
+				Message:      "contract failed",
+				Observed:     "1 matching item(s)",
+				Expected:     "min_count=1, attributes absent",
+				Diff:         []string{"\"http.request.header.authorization\" should be absent from every matched item, but was present in 1 item(s)"},
+				LikelyCauses: []string{"redaction contract"},
+				NextSteps:    []string{"inspect capture.normalized.json"},
+			},
+		},
 		Diff: model.DiffResult{
 			ComparedEffective: true,
 			Changes:           []model.DiffChange{{Severity: model.SeverityFail, Message: "pipeline wiring changed"}},
@@ -89,15 +105,21 @@ func sampleRunResult() model.RunResult {
 		Graph: model.GraphModel{
 			Nodes: []model.GraphNode{{ID: "pipeline-traces", Label: "traces"}},
 		},
+		Plan: model.TestPlan{
+			Fixtures: []string{"redaction"},
+		},
 		Artifacts: model.ArtifactManifest{
-			ReportJSON:     "",
-			SummaryMD:      "",
-			GraphMMD:       "",
-			GraphSVG:       "/tmp/graph.svg",
-			FinalConfig:    "/tmp/config.final.yaml",
-			ComponentsJSON: "/tmp/collector-components.json",
-			SemanticJSON:   "/tmp/semantic-findings.json",
-			DiffMD:         "",
+			ReportJSON:            "",
+			SummaryMD:             "",
+			GraphMMD:              "",
+			GraphSVG:              "/tmp/graph.svg",
+			FinalConfig:           "/tmp/config.final.yaml",
+			ComponentsJSON:        "/tmp/collector-components.json",
+			SemanticJSON:          "/tmp/semantic-findings.json",
+			DiffMD:                "",
+			ContractsJSON:         "/tmp/contracts.json",
+			ContractsMD:           "/tmp/contracts.md",
+			CaptureNormalizedJSON: "/tmp/capture.normalized.json",
 		},
 	}
 }

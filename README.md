@@ -8,6 +8,7 @@ Meridian is a local-first CLI and GitHub Action for OpenTelemetry Collector conf
 - pipeline graph generation
 - diff-aware risk hints
 - deterministic runtime checks against an ephemeral Collector
+- fixture-driven assertions and contracts
 - artifacted reports for local debugging and PR review
 
 Runtime commands support `--engine auto|docker|containerd`. `auto` prefers Docker when both are available and falls back to `nerdctl`-backed containerd on Linux or `lima nerdctl` on macOS.

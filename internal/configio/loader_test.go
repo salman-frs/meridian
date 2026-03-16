@@ -79,6 +79,23 @@ func TestLocalConfigSourcesSupportsFileURI(t *testing.T) {
 	}
 }
 
+func TestLoadConfigSupportsYAMLURI(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := LoadConfig(LoadOptions{
+		ConfigPaths: []string{"yaml:receivers:\n  otlp: {}\nexporters:\n  debug: {}\nservice:\n  pipelines:\n    traces:\n      receivers: [otlp]\n      exporters: [debug]\n"},
+	})
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if _, ok := cfg.Receivers["otlp"]; !ok {
+		t.Fatalf("LoadConfig() receivers = %#v, want otlp", cfg.Receivers)
+	}
+	if _, ok := cfg.Pipelines["traces"]; !ok {
+		t.Fatalf("LoadConfig() pipelines = %#v, want traces", cfg.Pipelines)
+	}
+}
+
 func writeFile(t *testing.T, path string, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

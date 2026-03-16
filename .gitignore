@@ -3,3 +3,4 @@
 /meridian
 /meridian-artifacts/
 *.tmp.yaml
+**/__pycache__/**

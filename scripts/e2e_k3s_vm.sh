@@ -307,7 +307,28 @@ run_single_scenario() {
     "$span_before" "$span_after" \
     "$log_before" "$log_after" \
     "$metric_before" "$metric_after"
+  python3 - "$artifact_dir/summary.json" <<'PY'
+import json
+import pathlib
+import sys
+
+summary = json.loads(pathlib.Path(sys.argv[1]).read_text())
+counts = summary.get("contract_summary", {})
+print(
+    "Contract summary: "
+    f"{counts.get('pass', 0)}/{counts.get('total', 0)} passed "
+    f"({counts.get('fail', 0)} failed)"
+)
+PY
   cat "$artifact_dir/summary.md"
+  python3 - "$artifact_dir/summary.json" <<'PY'
+import json
+import pathlib
+import sys
+
+summary = json.loads(pathlib.Path(sys.argv[1]).read_text())
+raise SystemExit(0 if summary.get("result") == "PASS" else 2)
+PY
 }
 
 run_matrix() {

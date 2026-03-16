@@ -48,6 +48,7 @@ type RunResult struct {
 	Plan             model.TestPlan
 	Captures         []model.SignalCapture
 	CustomAssertions []model.AssertionSpec
+	Contracts        []model.ContractSpec
 	ContainerID      string
 	ReproCommand     string
 }
@@ -79,7 +80,14 @@ func (r *Runner) Run(req RunRequest) (RunResult, error) {
 	}
 	defer req.CaptureSink.Stop()
 
+	suite, err := r.loadAssertionSuite(req.Assertions, req.Plan.RunID)
+	if err != nil {
+		return RunResult{}, err
+	}
 	req.Plan = r.configurePlan(req.Plan, address)
+	if len(suite.Fixtures) > 0 {
+		req.Plan.Fixtures = append([]string{}, suite.Fixtures...)
+	}
 
 	containerID, logs, err := r.startCollector(req)
 	if err != nil {
@@ -97,8 +105,7 @@ func (r *Runner) Run(req RunRequest) (RunResult, error) {
 	if err := req.CaptureSink.Persist(); err != nil {
 		return RunResult{}, err
 	}
-	customAssertions, err := r.loadCustomAssertions(req.Assertions, req.Plan.RunID)
-	if err != nil {
+	if err := req.CaptureSink.PersistNormalized(req.Artifacts.CaptureNormalizedJSON); err != nil {
 		return RunResult{}, err
 	}
 
@@ -110,7 +117,8 @@ func (r *Runner) Run(req RunRequest) (RunResult, error) {
 	return RunResult{
 		Plan:             req.Plan,
 		Captures:         captures,
-		CustomAssertions: customAssertions,
+		CustomAssertions: suite.Assertions,
+		Contracts:        suite.Contracts,
 		ContainerID:      containerID,
 		ReproCommand:     reproCommand(req),
 	}, nil
@@ -154,12 +162,12 @@ func (r *Runner) injectTelemetry(plan model.TestPlan, seed int64) error {
 	return nil
 }
 
-func (r *Runner) loadCustomAssertions(path string, runID string) ([]model.AssertionSpec, error) {
-	customAssertions, err := assert.LoadCustomAssertions(path, runID)
+func (r *Runner) loadAssertionSuite(path string, runID string) (model.AssertionFile, error) {
+	suite, err := assert.LoadSuite(path, runID)
 	if err != nil {
-		return nil, &model.ExitError{Code: 2, Err: fmt.Errorf("failed to load custom assertions: %w", err)}
+		return model.AssertionFile{}, &model.ExitError{Code: 2, Err: fmt.Errorf("failed to load assertions or contracts: %w", err)}
 	}
-	return customAssertions, nil
+	return suite, nil
 }
 
 func firstPath(paths []string) string {

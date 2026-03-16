@@ -21,6 +21,7 @@ type Options struct {
 	HeadRef         string
 	EnvFile         string
 	EnvInline       []string
+	Env             map[string]string
 	Threshold       string
 	CollectorBinary string
 	CollectorImage  string
@@ -295,6 +296,7 @@ func effectiveConfigs(opts Options, oldPath, newPath string, oldCfg, newCfg mode
 	oldFinal, okOld, errOld := collector.ResolveFinalConfig(collector.Options{
 		ConfigSources:   []string{oldPath},
 		ConfigModel:     oldCfg,
+		Env:             opts.Env,
 		CollectorBinary: opts.CollectorBinary,
 		CollectorImage:  opts.CollectorImage,
 		Engine:          opts.Engine,
@@ -302,6 +304,7 @@ func effectiveConfigs(opts Options, oldPath, newPath string, oldCfg, newCfg mode
 	newFinal, okNew, errNew := collector.ResolveFinalConfig(collector.Options{
 		ConfigSources:   []string{newPath},
 		ConfigModel:     newCfg,
+		Env:             opts.Env,
 		CollectorBinary: opts.CollectorBinary,
 		CollectorImage:  opts.CollectorImage,
 		Engine:          opts.Engine,

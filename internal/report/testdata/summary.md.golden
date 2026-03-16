@@ -5,13 +5,16 @@
 **Runtime backend:** `docker`  
 **Mode:** `safe`  
 **Collector image:** `otel/test:latest`  
+**Runtime config:** `collector-rendered effective config`  
 **Run:** `1970-01-01T00:00:00Z`
 
 ### Summary
 - Validate: PASS
 - Semantic: PASS
 - Graph: PASS
+- Contracts: FAIL (1/1 contract(s) failed)
 - traces: FAIL (received 0)
+- Fixtures: redaction
 
 ### What changed (risk highlights)
 - Effective config diff was available and used for classification.
@@ -22,10 +25,15 @@
 - validate: PASS
 - print-config: PASS
 
+### Contract checks
+- `redaction-contract`: FAIL (fixture `redaction`)
+  - "http.request.header.authorization" should be absent from every matched item, but was present in 1 item(s)
+
 ### Top failure
-- **traces-received**: received at least one item
-- Likely cause: pipeline wiring
-- Next step: open collector.log
+- **redaction-contract**: contract failed
+- Diff: "http.request.header.authorization" should be absent from every matched item, but was present in 1 item(s)
+- Likely cause: redaction contract
+- Next step: inspect capture.normalized.json
 
 ### Artifacts
 Download the `meridian-artifacts` workflow artifact for the full bundle.
@@ -38,4 +46,7 @@ Download the `meridian-artifacts` workflow artifact for the full bundle.
 - `collector-components.json`
 - `config.final.yaml`
 - `diff.md`
+- `contracts.json`
+- `contracts.md`
+- `capture.normalized.json`
 - `captures/`

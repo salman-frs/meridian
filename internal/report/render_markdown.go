@@ -16,17 +16,22 @@ func RenderSummaryMarkdown(result model.RunResult) string {
 	b.WriteString(fmt.Sprintf("**Runtime backend:** `%s`  \n", valueOrDefault(result.RuntimeBackend, "n/a")))
 	b.WriteString(fmt.Sprintf("**Mode:** `%s`  \n", result.Mode))
 	b.WriteString(fmt.Sprintf("**Collector image:** `%s`  \n", result.CollectorImage))
+	b.WriteString(fmt.Sprintf("**Runtime config:** `%s`  \n", runtimeConfigSource(result)))
 	b.WriteString(fmt.Sprintf("**Run:** `%s`\n\n", result.StartedAt.Format(time.RFC3339)))
 	b.WriteString("### Summary\n")
 	b.WriteString(fmt.Sprintf("- Validate: %s\n", findingsStatus(result.Findings)))
 	b.WriteString(fmt.Sprintf("- Semantic: %s\n", semanticStatus(result.Semantic)))
 	b.WriteString(fmt.Sprintf("- Graph: %s\n", graphStatus(result)))
+	b.WriteString(fmt.Sprintf("- Contracts: %s\n", contractStatus(result.Contracts)))
 	if len(result.Assertions) == 0 {
 		b.WriteString("- Runtime tests: not executed\n")
 	} else {
 		for _, line := range assertionSummaryLines(result.Assertions) {
 			b.WriteString(fmt.Sprintf("- %s\n", line))
 		}
+	}
+	if len(result.Plan.Fixtures) > 0 {
+		b.WriteString(fmt.Sprintf("- Fixtures: %s\n", strings.Join(result.Plan.Fixtures, ", ")))
 	}
 	if len(result.Diff.Changes) > 0 {
 		b.WriteString("\n### What changed (risk highlights)\n")
@@ -45,6 +50,19 @@ func RenderSummaryMarkdown(result model.RunResult) string {
 				line += " (" + stage.Message + ")"
 			}
 			b.WriteString(line + "\n")
+		}
+	}
+	if len(result.Contracts) > 0 {
+		b.WriteString("\n### Contract checks\n")
+		for _, contract := range result.Contracts {
+			line := fmt.Sprintf("- `%s`: %s", contract.ID, contract.Status)
+			if contract.Fixture != "" {
+				line += fmt.Sprintf(" (fixture `%s`)", contract.Fixture)
+			}
+			b.WriteString(line + "\n")
+			for _, item := range contract.Diff {
+				b.WriteString(fmt.Sprintf("  - %s\n", item))
+			}
 		}
 	}
 	if failure := topFailure(result); failure != "" {
@@ -142,6 +160,23 @@ func topDiffChanges(changes []model.DiffChange, limit int) []model.DiffChange {
 }
 
 func topFailure(result model.RunResult) string {
+	for _, contract := range result.Contracts {
+		if contract.Status != "FAIL" {
+			continue
+		}
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("- **%s**: %s\n", contract.ID, contract.Message))
+		for _, diff := range contract.Diff {
+			b.WriteString(fmt.Sprintf("- Diff: %s\n", diff))
+		}
+		for _, cause := range contract.LikelyCauses {
+			b.WriteString(fmt.Sprintf("- Likely cause: %s\n", cause))
+		}
+		for _, step := range contract.NextSteps {
+			b.WriteString(fmt.Sprintf("- Next step: %s\n", step))
+		}
+		return b.String()
+	}
 	for _, assertion := range result.Assertions {
 		if assertion.Status != "FAIL" {
 			continue
@@ -187,7 +222,7 @@ func ciArtifactNames(result model.RunResult) []string {
 	if len(result.Diff.Changes) > 0 {
 		names = append(names, "diff.md")
 	}
-	names = append(names, "captures/")
+	names = append(names, "contracts.json", "contracts.md", "capture.normalized.json", "captures/")
 	return names
 }
 
@@ -202,4 +237,14 @@ func semanticStatus(report model.SemanticReport) string {
 		return "PASS"
 	}
 	return report.Status
+}
+
+func runtimeConfigSource(result model.RunResult) string {
+	if strings.TrimSpace(result.RuntimeConfigSource) != "" {
+		return result.RuntimeConfigSource
+	}
+	if strings.TrimSpace(result.Semantic.FinalConfig) != "" {
+		return "collector-rendered effective config"
+	}
+	return "repo-local config"
 }

@@ -33,13 +33,14 @@ Important files:
 
 - `summary.md`
 - `summary.json`
+- `summary.json.contracts[]`
 - `logs/*.log`
 - `prom-http-requests.json`
 - `prom-heartbeat.json`
 - `loki-storefront.json`
 - `tempo-storefront.json`
 
-The summary artifacts are the authoritative acceptance record for the fixture. On this VM, pod logs plus Prometheus and gateway-counter evidence are the primary gates. Tempo and Loki artifacts are still collected when available, but they are not the blocking success signal for every negative scenario because the backend queries are not fully run-scoped.
+The summary artifacts are the authoritative acceptance record for the fixture. `summary.json` now includes a `contracts` array and `contract_summary` counts; these fixture-side contracts are the k3s equivalent of Meridian CLI contract output. On this VM, pod logs plus Prometheus and gateway-counter evidence are the primary gates. Tempo and Loki artifacts are still collected when available, but they are not the blocking success signal for every negative scenario because the backend queries are not fully run-scoped.
 
 ## Scenarios
 

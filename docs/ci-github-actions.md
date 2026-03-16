@@ -21,7 +21,7 @@ For local development inside this repository, use `uses: ./action`.
 - `collector_image`
 - `timeout`
 - `env_file`
-- `assertions`
+- `assertions` (`v1` assertions or `v2` contracts/fixtures file)
 - `render_graph`
 - `comment_mode`
 - `artifact_retention_days`

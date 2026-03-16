@@ -16,7 +16,9 @@ func RenderTerminal(result model.RunResult) string {
 		fmt.Sprintf("Runtime backend: %s", valueOrDefault(result.RuntimeBackend, "n/a")),
 		fmt.Sprintf("Mode: %s", result.Mode),
 		fmt.Sprintf("Collector image: %s", result.CollectorImage),
+		fmt.Sprintf("Runtime config: %s", runtimeConfigSource(result)),
 		fmt.Sprintf("Semantic validation: %s", semanticStatus(result.Semantic)),
+		fmt.Sprintf("Contracts: %s", contractStatus(result.Contracts)),
 		fmt.Sprintf("Artifacts: %s", result.Artifacts.RunDir),
 	}
 	if result.Message != "" {
@@ -42,6 +44,27 @@ func RenderTerminal(result model.RunResult) string {
 				line += " (" + stage.Message + ")"
 			}
 			lines = append(lines, line)
+		}
+	}
+	if len(result.Contracts) > 0 {
+		lines = append(lines, "", "Contract checks:")
+		for _, contract := range result.Contracts {
+			lines = append(lines, fmt.Sprintf("- %s: %s (%s observed %s expected %s)", contract.ID, contract.Status, contract.Message, contract.Observed, contract.Expected))
+			if contract.Status == "FAIL" {
+				lines = append(lines, "", "Contract diff:")
+				for _, item := range contract.Diff {
+					lines = append(lines, "- "+item)
+				}
+				lines = append(lines, "", "Likely causes:")
+				for _, cause := range contract.LikelyCauses {
+					lines = append(lines, "- "+cause)
+				}
+				lines = append(lines, "", "Next steps:")
+				for _, step := range contract.NextSteps {
+					lines = append(lines, "- "+step)
+				}
+				break
+			}
 		}
 	}
 	if len(result.Assertions) > 0 {
@@ -89,6 +112,9 @@ func artifactPaths(result model.RunResult) []string {
 	paths = append(paths,
 		"- "+result.Artifacts.CollectorLog,
 		"- "+result.Artifacts.PatchedConfig,
+		"- "+result.Artifacts.ContractsJSON,
+		"- "+result.Artifacts.ContractsMD,
+		"- "+result.Artifacts.CaptureNormalizedJSON,
 	)
 	if len(result.Diff.Changes) > 0 {
 		paths = append(paths, "- "+result.Artifacts.DiffMD)

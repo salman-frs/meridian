@@ -135,7 +135,7 @@ func addRuntimeFlags(cmd *cobra.Command, opts *RuntimeOptions) {
 	cmd.Flags().DurationVar(&opts.InjectTimeout, "inject-timeout", 5*time.Second, "telemetry injection timeout")
 	cmd.Flags().DurationVar(&opts.CaptureTimeout, "capture-timeout", 10*time.Second, "capture wait timeout")
 	cmd.Flags().StringSliceVar(&opts.Pipelines, "pipelines", nil, "limit runtime checks to specific signals or pipelines")
-	cmd.Flags().StringVar(&opts.AssertionsFile, "assertions", "", "custom assertions YAML file")
+	cmd.Flags().StringVar(&opts.AssertionsFile, "assertions", "", "assertions or contracts YAML file")
 	cmd.Flags().BoolVar(&opts.KeepContainers, "keep-containers", false, "keep the collector container running after the test")
 	cmd.Flags().Int64Var(&opts.Seed, "seed", 42, "deterministic generation seed")
 	cmd.Flags().BoolVar(&opts.ChangedOnly, "changed-only", false, "require explicit diff inputs and include only diff-aware review hints")

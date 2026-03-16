@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -12,11 +13,13 @@ import (
 	"github.com/salman-frs/meridian/internal/configio"
 	"github.com/salman-frs/meridian/internal/model"
 	"github.com/salman-frs/meridian/internal/runtime"
+	"gopkg.in/yaml.v3"
 )
 
 type Options struct {
 	ConfigSources   []string
 	ConfigModel     model.ConfigModel
+	Env             map[string]string
 	CollectorBinary string
 	CollectorImage  string
 	Engine          model.RuntimeEngine
@@ -136,6 +139,19 @@ func ResolveFinalConfig(opts Options) (string, bool, error) {
 	return string(finalConfig), true, nil
 }
 
+func MaterializeConfig(opts Options) (model.ConfigModel, string, bool, error) {
+	finalConfig, ok, err := ResolveFinalConfig(opts)
+	if err != nil || !ok {
+		return model.ConfigModel{}, "", ok, err
+	}
+	cfg, err := LoadEffectiveConfig(finalConfig, primarySource(opts.ConfigSources)+"#print-config")
+	if err != nil {
+		return model.ConfigModel{}, "", true, err
+	}
+	cfg.SourcePaths = append([]string{}, opts.ConfigSources...)
+	return cfg, finalConfig, true, nil
+}
+
 func skipped(reason string, detail string) model.SemanticReport {
 	report := model.SemanticReport{
 		Enabled:       false,
@@ -175,7 +191,7 @@ func resolveExecutionTarget(opts Options) (executionTarget, error) {
 		return executionTarget{}, errors.New("no config sources were provided")
 	}
 	if opts.CollectorBinary != "" {
-		return binaryTarget(opts.CollectorBinary), nil
+		return binaryTarget(opts.CollectorBinary, opts.Env), nil
 	}
 	if opts.CollectorImage == "" {
 		return executionTarget{}, errors.New("no collector target available")
@@ -188,33 +204,35 @@ func resolveExecutionTarget(opts Options) (executionTarget, error) {
 			return executionTarget{}, err
 		}
 	}
-	return imageTarget(resolved, opts.CollectorImage, opts.ConfigSources)
+	return imageTarget(resolved, opts.CollectorImage, opts.ConfigSources, opts.Env)
 }
 
-func binaryTarget(path string) executionTarget {
+func binaryTarget(path string, env map[string]string) executionTarget {
 	label := path
 	return executionTarget{
 		source:       "binary",
 		target:       path,
 		commandLabel: label,
 		runBinary: func(args ...string) ([]byte, error) {
-			return runCommand(exec.Command(path, args...))
+			return runCommand(commandWithEnv(exec.Command(path, args...), env))
 		},
 		runWithSources: func(subcommand string, sources []string) ([]byte, error) {
 			args := []string{subcommand}
 			for _, source := range sources {
 				args = append(args, "--config", source)
 			}
-			return runCommand(exec.Command(path, args...))
+			return runCommand(commandWithEnv(exec.Command(path, args...), env))
 		},
 	}
 }
 
-func imageTarget(engine runtime.ResolvedEngine, image string, sources []string) (executionTarget, error) {
+func imageTarget(engine runtime.ResolvedEngine, image string, sources []string, env map[string]string) (executionTarget, error) {
 	mountArgs, mappedSources, err := mapConfigSourcesForContainer(sources)
 	if err != nil {
 		return executionTarget{}, err
 	}
+	envArgs := containerEnvArgs(env)
+	networkArgs := semanticContainerRunArgs(engine.Engine(), engine.RuntimeBackend())
 	label := engine.CommandLabel()
 	if label == "" {
 		return executionTarget{}, errors.New("no container engine is available")
@@ -224,14 +242,18 @@ func imageTarget(engine runtime.ResolvedEngine, image string, sources []string) 
 		target:       image,
 		commandLabel: label,
 		runBinary: func(args ...string) ([]byte, error) {
-			runArgs := append([]string{"run", "--rm"}, mountArgs...)
+			runArgs := append([]string{"run", "--rm"}, networkArgs...)
+			runArgs = append(runArgs, mountArgs...)
+			runArgs = append(runArgs, envArgs...)
 			runArgs = append(runArgs, image)
 			runArgs = append(runArgs, args...)
 			cmd := engine.Command(runArgs...)
 			return runCommand(cmd)
 		},
 		runWithSources: func(subcommand string, _ []string) ([]byte, error) {
-			runArgs := append([]string{"run", "--rm"}, mountArgs...)
+			runArgs := append([]string{"run", "--rm"}, networkArgs...)
+			runArgs = append(runArgs, mountArgs...)
+			runArgs = append(runArgs, envArgs...)
 			runArgs = append(runArgs, image, subcommand)
 			for _, source := range mappedSources {
 				runArgs = append(runArgs, "--config", source)
@@ -310,7 +332,61 @@ func runCommand(cmd *exec.Cmd) ([]byte, error) {
 	return nil, err
 }
 
+func commandWithEnv(cmd *exec.Cmd, env map[string]string) *exec.Cmd {
+	if cmd == nil {
+		return nil
+	}
+	if len(env) == 0 {
+		return cmd
+	}
+	cmd.Env = append(os.Environ(), envPairs(env)...)
+	return cmd
+}
+
+func containerEnvArgs(env map[string]string) []string {
+	pairs := envPairs(env)
+	args := make([]string, 0, len(pairs)*2)
+	for _, pair := range pairs {
+		args = append(args, "-e", pair)
+	}
+	return args
+}
+
+func envPairs(env map[string]string) []string {
+	if len(env) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	pairs := make([]string, 0, len(keys))
+	for _, key := range keys {
+		pairs = append(pairs, key+"="+env[key])
+	}
+	return pairs
+}
+
+func semanticContainerRunArgs(engine model.RuntimeEngine, backend string) []string {
+	if engine == model.RuntimeEngineContainerd && backend == "nerdctl" {
+		return []string{"--network", "host"}
+	}
+	return nil
+}
+
+func primarySource(sources []string) string {
+	if len(sources) == 0 {
+		return "config"
+	}
+	return sources[0]
+}
+
 func parseComponents(output string) []model.CollectorComponent {
+	if components := parseStructuredComponents(output); len(components) > 0 {
+		return components
+	}
+
 	kind := ""
 	components := []model.CollectorComponent{}
 	for _, line := range strings.Split(output, "\n") {
@@ -342,6 +418,102 @@ func parseComponents(output string) []model.CollectorComponent {
 	return components
 }
 
+func parseStructuredComponents(output string) []model.CollectorComponent {
+	var raw map[string]any
+	if err := yaml.Unmarshal([]byte(output), &raw); err != nil {
+		return nil
+	}
+	kinds := []struct {
+		section string
+		kind    string
+	}{
+		{section: "receivers", kind: "receiver"},
+		{section: "processors", kind: "processor"},
+		{section: "exporters", kind: "exporter"},
+		{section: "connectors", kind: "connector"},
+		{section: "extensions", kind: "extension"},
+	}
+	components := []model.CollectorComponent{}
+	for _, kind := range kinds {
+		items, _ := raw[kind.section].([]any)
+		for _, item := range items {
+			componentMap, _ := item.(map[string]any)
+			name := componentValue(componentMap["name"])
+			if name == "" {
+				continue
+			}
+			components = append(components, model.CollectorComponent{
+				Kind:      kind.kind,
+				Name:      name,
+				Stability: componentStability(componentMap["stability"]),
+				Raw:       strings.TrimSpace(componentSummary(componentMap)),
+			})
+		}
+	}
+	return components
+}
+
+func componentValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	default:
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
+}
+
+func componentSummary(component map[string]any) string {
+	name := componentValue(component["name"])
+	module := componentValue(component["module"])
+	if module == "" {
+		return name
+	}
+	return fmt.Sprintf("%s (%s)", name, module)
+}
+
+func componentStability(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return detectStability(typed)
+	case map[string]any:
+		keys := make([]string, 0, len(typed))
+		for key := range typed {
+			keys = append(keys, key)
+		}
+		slices.Sort(keys)
+		best := ""
+		for _, key := range keys {
+			stability := detectStability(componentValue(typed[key]))
+			if stability == "" {
+				continue
+			}
+			if best == "" || stabilityRank(stability) > stabilityRank(best) {
+				best = stability
+			}
+		}
+		return best
+	default:
+		return ""
+	}
+}
+
+func stabilityRank(value string) int {
+	switch value {
+	case "stable":
+		return 5
+	case "beta":
+		return 4
+	case "alpha":
+		return 3
+	case "development":
+		return 2
+	case "unmaintained":
+		return 1
+	default:
+		return 0
+	}
+}
+
 func detectStability(detail string) string {
 	lower := strings.ToLower(detail)
 	switch {
@@ -353,6 +525,8 @@ func detectStability(detail string) string {
 		return "alpha"
 	case strings.Contains(lower, "development"):
 		return "development"
+	case strings.Contains(lower, "unmaintained"):
+		return "unmaintained"
 	default:
 		return ""
 	}

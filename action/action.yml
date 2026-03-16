@@ -26,7 +26,7 @@ inputs:
     required: false
     default: ""
   assertions:
-    description: Optional assertions file
+    description: Optional assertions or contracts file
     required: false
     default: ""
   render_graph:

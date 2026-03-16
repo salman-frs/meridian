@@ -28,8 +28,10 @@ type RunService struct {
 
 type runInputs struct {
 	configSources []string
-	config        model.ConfigModel
+	sourceConfig  model.ConfigModel
+	runtimeConfig model.ConfigModel
 	envValues     map[string]string
+	semanticEnv   map[string]string
 	loadDuration  time.Duration
 	validatedOpts ResolvedRuntimeOptions
 }
@@ -93,12 +95,7 @@ func (s RunService) Execute(global *GlobalOptions, runtimeOpts *RuntimeOptions, 
 	startedAt := s.now().UTC()
 	runID := fmt.Sprintf("%s-%d", startedAt.Format("20060102-150405.000000000"), os.Getpid())
 
-	prep, err := s.prepareRuntime(inputs.config, inputs.validatedOpts, global.Output, runID)
-	if err != nil {
-		return model.RunResult{}, err
-	}
-
-	staticData, err := s.writeStaticArtifacts(inputs.config, prep.artifacts, inputs.validatedOpts.RenderGraph)
+	prep, err := s.prepareExecution(inputs.validatedOpts, global.Output, runID)
 	if err != nil {
 		return model.RunResult{}, err
 	}
@@ -114,14 +111,8 @@ func (s RunService) Execute(global *GlobalOptions, runtimeOpts *RuntimeOptions, 
 		StartedAt:      startedAt,
 		Timings: map[string]string{
 			"config_load": inputs.loadDuration.String(),
-			"validate":    staticData.validateDuration.String(),
-			"graph":       staticData.graphDuration.String(),
-			"patch":       prep.patchDuration.String(),
 		},
 		Ports:     prep.ports,
-		Findings:  staticData.findings,
-		Graph:     staticData.graph,
-		Plan:      prep.plan,
 		Artifacts: prep.artifacts,
 	}
 
@@ -134,6 +125,37 @@ func (s RunService) Execute(global *GlobalOptions, runtimeOpts *RuntimeOptions, 
 	result.Findings = append(result.Findings, semanticResult.Findings...)
 	result.Timings["semantic"] = s.now().Sub(semanticStart).String()
 
+	runtimeConfig, runtimeConfigSource, err := selectRuntimeConfig(inputs, semanticResult)
+	if err != nil {
+		return model.RunResult{}, &model.ExitError{Code: 3, Err: err}
+	}
+	inputs.runtimeConfig = runtimeConfig
+	result.RuntimeConfigSource = runtimeConfigSource
+	if len(inputs.envValues) == 0 {
+		if envValues, envErr := loadRuntimeEnv(global, inputs.runtimeConfig); envErr == nil {
+			inputs.envValues = envValues
+		}
+	}
+
+	staticData, err := s.writeStaticArtifacts(inputs.runtimeConfig, prep.artifacts, inputs.validatedOpts.RenderGraph)
+	if err != nil {
+		return model.RunResult{}, err
+	}
+	result.Findings = append(result.Findings, staticData.findings...)
+	result.Graph = staticData.graph
+	result.Timings["validate"] = staticData.validateDuration.String()
+	result.Timings["graph"] = staticData.graphDuration.String()
+
+	prep, err = s.patchRuntime(inputs.runtimeConfig, inputs.validatedOpts, prep)
+	if err != nil {
+		return model.RunResult{}, err
+	}
+	result.Ports = prep.ports
+	result.Plan = prep.plan
+	result.Engine = prep.engine.Engine()
+	result.RuntimeBackend = prep.engine.RuntimeBackend()
+	result.Timings["patch"] = prep.patchDuration.String()
+
 	if err := s.attachDiff(&result, global, runtimeOpts, includeDiff); err != nil {
 		return model.RunResult{}, err
 	}
@@ -142,7 +164,7 @@ func (s RunService) Execute(global *GlobalOptions, runtimeOpts *RuntimeOptions, 
 		return s.finishValidationFailure(result)
 	}
 
-	return s.executeRuntimeHarness(result, prep.engine, inputs.config, prep.patchedConfig, inputs.envValues, inputs.validatedOpts)
+	return s.executeRuntimeHarness(result, prep.engine, inputs.runtimeConfig, prep.patchedConfig, inputs.envValues, inputs.validatedOpts)
 }
 
 func (s RunService) loadInputs(global *GlobalOptions, runtimeOpts *RuntimeOptions) (runInputs, error) {
@@ -159,25 +181,36 @@ func (s RunService) loadInputs(global *GlobalOptions, runtimeOpts *RuntimeOption
 	}
 
 	cfgLoadStart := s.now()
-	cfg, err := loadConfig(global)
+	semanticEnv, err := configio.LoadEnv(global.EnvFile, global.EnvInline, true)
 	if err != nil {
 		return runInputs{}, err
 	}
-	envValues, err := loadRuntimeEnv(global, cfg)
-	if err != nil {
+	sourceCfg, err := loadConfig(global)
+	if err != nil && !isNoLocalConfigSource(err) {
 		return runInputs{}, err
+	}
+	if err != nil {
+		sourceCfg = model.ConfigModel{SourcePaths: configSources}
+	}
+	envValues, err := loadRuntimeEnv(global, sourceCfg)
+	if err != nil && !isNoLocalConfigSource(err) {
+		return runInputs{}, err
+	}
+	if err != nil {
+		envValues = map[string]string{}
 	}
 
 	return runInputs{
 		configSources: configSources,
-		config:        cfg,
+		sourceConfig:  sourceCfg,
 		envValues:     envValues,
+		semanticEnv:   semanticEnv,
 		loadDuration:  s.now().Sub(cfgLoadStart),
 		validatedOpts: validatedOpts,
 	}, nil
 }
 
-func (s RunService) prepareRuntime(cfg model.ConfigModel, runtimeOpts ResolvedRuntimeOptions, outputPath string, runID string) (runtimePreparation, error) {
+func (s RunService) prepareExecution(runtimeOpts ResolvedRuntimeOptions, outputPath string, runID string) (runtimePreparation, error) {
 	outputDir, err := filepath.Abs(outputPath)
 	if err != nil {
 		return runtimePreparation{}, &model.ExitError{Code: 3, Err: err}
@@ -193,16 +226,24 @@ func (s RunService) prepareRuntime(cfg model.ConfigModel, runtimeOpts ResolvedRu
 		return runtimePreparation{}, &model.ExitError{Code: 3, Err: err}
 	}
 
-	patchStart := s.now()
 	engine, err := runtime.Resolve(runtimeOpts.Engine)
 	if err != nil {
 		return runtimePreparation{}, &model.ExitError{Code: 3, Err: err}
 	}
 
+	return runtimePreparation{
+		artifacts: artifacts,
+		ports:     ports,
+		engine:    engine,
+	}, nil
+}
+
+func (s RunService) patchRuntime(cfg model.ConfigModel, runtimeOpts ResolvedRuntimeOptions, prep runtimePreparation) (runtimePreparation, error) {
+	patchStart := s.now()
 	patchedConfig, plan, err := patch.Build(cfg, patch.Options{
-		RunID:           runID,
-		Engine:          engine.Engine(),
-		RuntimeBackend:  engine.RuntimeBackend(),
+		RunID:           filepath.Base(prep.artifacts.RunDir),
+		Engine:          prep.engine.Engine(),
+		RuntimeBackend:  prep.engine.RuntimeBackend(),
 		Mode:            runtimeOpts.Mode,
 		CollectorImage:  runtimeOpts.CollectorImage,
 		Timeout:         runtimeOpts.Timeout,
@@ -210,22 +251,22 @@ func (s RunService) prepareRuntime(cfg model.ConfigModel, runtimeOpts ResolvedRu
 		InjectTimeout:   runtimeOpts.InjectTimeout,
 		CaptureTimeout:  runtimeOpts.CaptureTimeout,
 		PipelineArgs:    runtimeOpts.Pipelines,
-		InjectionPort:   ports.InjectionGRPC,
-		CapturePort:     ports.CaptureGRPC,
-		CaptureEndpoint: engine.CaptureEndpoint(fmt.Sprintf("127.0.0.1:%d", ports.CaptureGRPC), ports.CaptureGRPC),
+		InjectionPort:   prep.ports.InjectionGRPC,
+		CapturePort:     prep.ports.CaptureGRPC,
+		CaptureEndpoint: prep.engine.CaptureEndpoint(fmt.Sprintf("127.0.0.1:%d", prep.ports.CaptureGRPC), prep.ports.CaptureGRPC),
 		CaptureSamples:  runtimeOpts.CaptureSamples,
 	})
 	if err != nil {
 		return runtimePreparation{}, &model.ExitError{Code: 2, Err: err}
 	}
-	if err := model.WriteText(artifacts.PatchedConfig, patchedConfig.CanonicalYAML); err != nil {
+	if err := model.WriteText(prep.artifacts.PatchedConfig, patchedConfig.CanonicalYAML); err != nil {
 		return runtimePreparation{}, err
 	}
 
 	return runtimePreparation{
-		artifacts:     artifacts,
-		ports:         ports,
-		engine:        engine,
+		artifacts:     prep.artifacts,
+		ports:         prep.ports,
+		engine:        prep.engine,
 		patchedConfig: patchedConfig,
 		plan:          plan,
 		patchDuration: s.now().Sub(patchStart),
@@ -273,6 +314,10 @@ func (s RunService) attachDiff(result *model.RunResult, global *GlobalOptions, r
 	}
 
 	diffStart := s.now()
+	semanticEnv, err := configio.LoadEnv(global.EnvFile, global.EnvInline, true)
+	if err != nil {
+		return &model.ExitError{Code: 2, Err: err}
+	}
 	diffResult, err := diffing.Run(diffing.Options{
 		OldPath:         runtimeOpts.Diff.OldPath,
 		NewPath:         diffNewPath(global, runtimeOpts),
@@ -280,6 +325,7 @@ func (s RunService) attachDiff(result *model.RunResult, global *GlobalOptions, r
 		HeadRef:         runtimeOpts.Diff.HeadRef,
 		EnvFile:         global.EnvFile,
 		EnvInline:       global.EnvInline,
+		Env:             semanticEnv,
 		Threshold:       runtimeOpts.Diff.Threshold,
 		CollectorBinary: global.CollectorBinary,
 		CollectorImage:  runtimeOpts.CollectorImage,
@@ -344,6 +390,7 @@ func (s RunService) executeRuntimeHarness(result model.RunResult, engine runtime
 	result.Plan = runtimeResult.Plan
 	result.RuntimeBackend = runtimeResult.Plan.RuntimeBackend
 	result.Assertions = assert.Evaluate(sink, runtimeResult.Captures, runtimeResult.CustomAssertions, runtimeResult.Plan)
+	result.Contracts = assert.EvaluateContracts(sink.Normalized(), runtimeResult.Contracts, runtimeResult.Plan)
 	result.ContainerID = runtimeResult.ContainerID
 	result.ReproCommand = runtimeResult.ReproCommand
 	for _, assertion := range result.Assertions {
@@ -352,9 +399,21 @@ func (s RunService) executeRuntimeHarness(result model.RunResult, engine runtime
 			break
 		}
 	}
+	if result.Status == "PASS" {
+		for _, contract := range result.Contracts {
+			if contract.Status == "FAIL" {
+				result.Status = "FAIL"
+				break
+			}
+		}
+	}
 	result.FinishedAt = s.now().UTC()
 	if result.Status == "FAIL" && result.Message == "" {
-		result.Message = "runtime assertions failed"
+		if len(result.Contracts) > 0 {
+			result.Message = "runtime contracts failed"
+		} else {
+			result.Message = "runtime assertions failed"
+		}
 	}
 	result.Timings["total"] = result.FinishedAt.Sub(result.StartedAt).String()
 	if err := report.WriteBundle(result); err != nil {
@@ -411,7 +470,8 @@ func reservePort() (int, error) {
 func (s RunService) runSemanticValidation(global *GlobalOptions, inputs runInputs, engine runtime.ResolvedEngine) (model.SemanticReport, error) {
 	report, err := collector.Analyze(collector.Options{
 		ConfigSources:   inputs.configSources,
-		ConfigModel:     inputs.config,
+		ConfigModel:     inputs.sourceConfig,
+		Env:             inputs.semanticEnv,
 		CollectorBinary: global.CollectorBinary,
 		CollectorImage:  inputs.validatedOpts.CollectorImage,
 		Engine:          model.RuntimeEngine(inputs.validatedOpts.Engine),
@@ -429,4 +489,51 @@ func primaryConfigSource(sources []string) string {
 		return ""
 	}
 	return sources[0]
+}
+
+func isNoLocalConfigSource(err error) bool {
+	var exitErr *model.ExitError
+	if errors.As(err, &exitErr) && exitErr != nil {
+		return errors.Is(exitErr.Err, configio.ErrNoLocalConfigSource)
+	}
+	return errors.Is(err, configio.ErrNoLocalConfigSource)
+}
+
+func selectRuntimeConfig(inputs runInputs, semantic model.SemanticReport) (model.ConfigModel, string, error) {
+	if runtimeConfigFromSources(inputs.configSources, inputs.sourceConfig) {
+		return inputs.sourceConfig, describeSourceConfig(inputs.configSources), nil
+	}
+	if strings.TrimSpace(semantic.FinalConfig) != "" {
+		cfg, err := collector.LoadEffectiveConfig(semantic.FinalConfig, primaryConfigSource(inputs.configSources)+"#print-config")
+		if err != nil {
+			return model.ConfigModel{}, "", fmt.Errorf("failed to parse collector-rendered config: %w", err)
+		}
+		cfg.SourcePaths = append([]string{}, inputs.configSources...)
+		return cfg, "collector-rendered effective config", nil
+	}
+	return model.ConfigModel{}, "", errors.New("runtime requires collector print-config when non-local config sources are used")
+}
+
+func hasNonLocalSources(sources []string) bool {
+	localCount := len(configio.LocalConfigSources(sources))
+	return localCount != len(sources)
+}
+
+func runtimeConfigFromSources(sources []string, cfg model.ConfigModel) bool {
+	if len(cfg.Raw) == 0 {
+		return false
+	}
+	for _, source := range sources {
+		if !configio.IsMaterializableConfigSource(source) {
+			return false
+		}
+	}
+	return true
+}
+
+func describeSourceConfig(sources []string) string {
+	if hasNonLocalSources(sources) {
+		return "source-merged config"
+	}
+	return "repo-local config"
 }

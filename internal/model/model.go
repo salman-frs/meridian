@@ -157,6 +157,7 @@ type TestPlan struct {
 	CollectorImage    string        `json:"collector_image" yaml:"collector_image"`
 	Pipelines         []string      `json:"pipelines" yaml:"pipelines"`
 	Signals           []SignalType  `json:"signals" yaml:"signals"`
+	Fixtures          []string      `json:"fixtures,omitempty" yaml:"fixtures,omitempty"`
 	InjectedReceiver  string        `json:"injected_receiver" yaml:"injected_receiver"`
 	CaptureEndpoint   string        `json:"capture_endpoint" yaml:"capture_endpoint"`
 	InjectionEndpoint string        `json:"injection_endpoint" yaml:"injection_endpoint"`
@@ -199,43 +200,48 @@ type SignalCapture struct {
 }
 
 type RunResult struct {
-	RunID          string            `json:"run_id" yaml:"run_id"`
-	ConfigPath     string            `json:"config_path" yaml:"config_path"`
-	Status         string            `json:"status" yaml:"status"`
-	Message        string            `json:"message,omitempty" yaml:"message,omitempty"`
-	Engine         RuntimeEngine     `json:"engine" yaml:"engine"`
-	RuntimeBackend string            `json:"runtime_backend,omitempty" yaml:"runtime_backend,omitempty"`
-	Mode           RuntimeMode       `json:"mode" yaml:"mode"`
-	CollectorImage string            `json:"collector_image" yaml:"collector_image"`
-	StartedAt      time.Time         `json:"started_at" yaml:"started_at"`
-	FinishedAt     time.Time         `json:"finished_at" yaml:"finished_at"`
-	Timings        map[string]string `json:"timings" yaml:"timings"`
-	Ports          RuntimePorts      `json:"ports" yaml:"ports"`
-	Findings       []Finding         `json:"findings,omitempty" yaml:"findings,omitempty"`
-	Diff           DiffResult        `json:"diff,omitempty" yaml:"diff,omitempty"`
-	Graph          GraphModel        `json:"graph,omitempty" yaml:"graph,omitempty"`
-	Semantic       SemanticReport    `json:"semantic,omitempty" yaml:"semantic,omitempty"`
-	Plan           TestPlan          `json:"plan,omitempty" yaml:"plan,omitempty"`
-	Assertions     []AssertionResult `json:"assertions,omitempty" yaml:"assertions,omitempty"`
-	Captures       []SignalCapture   `json:"captures,omitempty" yaml:"captures,omitempty"`
-	Artifacts      ArtifactManifest  `json:"artifacts" yaml:"artifacts"`
-	ContainerID    string            `json:"container_id,omitempty" yaml:"container_id,omitempty"`
-	ReproCommand   string            `json:"repro_command,omitempty" yaml:"repro_command,omitempty"`
+	RunID               string            `json:"run_id" yaml:"run_id"`
+	ConfigPath          string            `json:"config_path" yaml:"config_path"`
+	RuntimeConfigSource string            `json:"runtime_config_source,omitempty" yaml:"runtime_config_source,omitempty"`
+	Status              string            `json:"status" yaml:"status"`
+	Message             string            `json:"message,omitempty" yaml:"message,omitempty"`
+	Engine              RuntimeEngine     `json:"engine" yaml:"engine"`
+	RuntimeBackend      string            `json:"runtime_backend,omitempty" yaml:"runtime_backend,omitempty"`
+	Mode                RuntimeMode       `json:"mode" yaml:"mode"`
+	CollectorImage      string            `json:"collector_image" yaml:"collector_image"`
+	StartedAt           time.Time         `json:"started_at" yaml:"started_at"`
+	FinishedAt          time.Time         `json:"finished_at" yaml:"finished_at"`
+	Timings             map[string]string `json:"timings" yaml:"timings"`
+	Ports               RuntimePorts      `json:"ports" yaml:"ports"`
+	Findings            []Finding         `json:"findings,omitempty" yaml:"findings,omitempty"`
+	Diff                DiffResult        `json:"diff,omitempty" yaml:"diff,omitempty"`
+	Graph               GraphModel        `json:"graph,omitempty" yaml:"graph,omitempty"`
+	Semantic            SemanticReport    `json:"semantic,omitempty" yaml:"semantic,omitempty"`
+	Plan                TestPlan          `json:"plan,omitempty" yaml:"plan,omitempty"`
+	Assertions          []AssertionResult `json:"assertions,omitempty" yaml:"assertions,omitempty"`
+	Contracts           []ContractResult  `json:"contracts,omitempty" yaml:"contracts,omitempty"`
+	Captures            []SignalCapture   `json:"captures,omitempty" yaml:"captures,omitempty"`
+	Artifacts           ArtifactManifest  `json:"artifacts" yaml:"artifacts"`
+	ContainerID         string            `json:"container_id,omitempty" yaml:"container_id,omitempty"`
+	ReproCommand        string            `json:"repro_command,omitempty" yaml:"repro_command,omitempty"`
 }
 
 type ArtifactManifest struct {
-	RunDir         string `json:"run_dir" yaml:"run_dir"`
-	ReportJSON     string `json:"report_json" yaml:"report_json"`
-	SummaryMD      string `json:"summary_md" yaml:"summary_md"`
-	GraphMMD       string `json:"graph_mmd" yaml:"graph_mmd"`
-	GraphSVG       string `json:"graph_svg,omitempty" yaml:"graph_svg,omitempty"`
-	CollectorLog   string `json:"collector_log" yaml:"collector_log"`
-	PatchedConfig  string `json:"patched_config" yaml:"patched_config"`
-	FinalConfig    string `json:"final_config,omitempty" yaml:"final_config,omitempty"`
-	CapturesDir    string `json:"captures_dir" yaml:"captures_dir"`
-	ComponentsJSON string `json:"components_json,omitempty" yaml:"components_json,omitempty"`
-	SemanticJSON   string `json:"semantic_json,omitempty" yaml:"semantic_json,omitempty"`
-	DiffMD         string `json:"diff_md,omitempty" yaml:"diff_md,omitempty"`
+	RunDir                string `json:"run_dir" yaml:"run_dir"`
+	ReportJSON            string `json:"report_json" yaml:"report_json"`
+	SummaryMD             string `json:"summary_md" yaml:"summary_md"`
+	GraphMMD              string `json:"graph_mmd" yaml:"graph_mmd"`
+	GraphSVG              string `json:"graph_svg,omitempty" yaml:"graph_svg,omitempty"`
+	CollectorLog          string `json:"collector_log" yaml:"collector_log"`
+	PatchedConfig         string `json:"patched_config" yaml:"patched_config"`
+	FinalConfig           string `json:"final_config,omitempty" yaml:"final_config,omitempty"`
+	CapturesDir           string `json:"captures_dir" yaml:"captures_dir"`
+	CaptureNormalizedJSON string `json:"capture_normalized_json,omitempty" yaml:"capture_normalized_json,omitempty"`
+	ComponentsJSON        string `json:"components_json,omitempty" yaml:"components_json,omitempty"`
+	SemanticJSON          string `json:"semantic_json,omitempty" yaml:"semantic_json,omitempty"`
+	DiffMD                string `json:"diff_md,omitempty" yaml:"diff_md,omitempty"`
+	ContractsJSON         string `json:"contracts_json,omitempty" yaml:"contracts_json,omitempty"`
+	ContractsMD           string `json:"contracts_md,omitempty" yaml:"contracts_md,omitempty"`
 }
 
 type SemanticStage struct {
@@ -268,7 +274,9 @@ type SemanticReport struct {
 type AssertionFile struct {
 	Version    int               `yaml:"version"`
 	Defaults   AssertionDefaults `yaml:"defaults"`
+	Fixtures   []string          `yaml:"fixtures"`
 	Assertions []AssertionSpec   `yaml:"assertions"`
+	Contracts  []ContractSpec    `yaml:"contracts"`
 }
 
 type AssertionDefaults struct {
@@ -301,17 +309,20 @@ type AssertionExpect struct {
 func NewArtifactManifest(baseOutput string, runID string) ArtifactManifest {
 	runDir := filepath.Join(baseOutput, "runs", runID)
 	return ArtifactManifest{
-		RunDir:         runDir,
-		ReportJSON:     filepath.Join(runDir, "report.json"),
-		SummaryMD:      filepath.Join(runDir, "summary.md"),
-		GraphMMD:       filepath.Join(runDir, "graph.mmd"),
-		CollectorLog:   filepath.Join(runDir, "collector.log"),
-		PatchedConfig:  filepath.Join(runDir, "config.patched.yaml"),
-		FinalConfig:    filepath.Join(runDir, "config.final.yaml"),
-		CapturesDir:    filepath.Join(runDir, "captures"),
-		ComponentsJSON: filepath.Join(runDir, "collector-components.json"),
-		SemanticJSON:   filepath.Join(runDir, "semantic-findings.json"),
-		DiffMD:         filepath.Join(runDir, "diff.md"),
+		RunDir:                runDir,
+		ReportJSON:            filepath.Join(runDir, "report.json"),
+		SummaryMD:             filepath.Join(runDir, "summary.md"),
+		GraphMMD:              filepath.Join(runDir, "graph.mmd"),
+		CollectorLog:          filepath.Join(runDir, "collector.log"),
+		PatchedConfig:         filepath.Join(runDir, "config.patched.yaml"),
+		FinalConfig:           filepath.Join(runDir, "config.final.yaml"),
+		CapturesDir:           filepath.Join(runDir, "captures"),
+		CaptureNormalizedJSON: filepath.Join(runDir, "capture.normalized.json"),
+		ComponentsJSON:        filepath.Join(runDir, "collector-components.json"),
+		SemanticJSON:          filepath.Join(runDir, "semantic-findings.json"),
+		DiffMD:                filepath.Join(runDir, "diff.md"),
+		ContractsJSON:         filepath.Join(runDir, "contracts.json"),
+		ContractsMD:           filepath.Join(runDir, "contracts.md"),
 	}
 }
 

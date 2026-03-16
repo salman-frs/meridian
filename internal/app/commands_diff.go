@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 
+	"github.com/salman-frs/meridian/internal/configio"
 	"github.com/salman-frs/meridian/internal/diffing"
 	"github.com/salman-frs/meridian/internal/model"
 	"github.com/salman-frs/meridian/internal/report"
@@ -16,6 +17,10 @@ func newDiffCommand(global *GlobalOptions) *cobra.Command {
 		Use:   "diff",
 		Short: "Compare two collector configs and classify risky changes",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			envValues, err := configio.LoadEnv(global.EnvFile, global.EnvInline, true)
+			if err != nil {
+				return err
+			}
 			result, err := diffing.Run(diffing.Options{
 				OldPath:         opts.OldPath,
 				NewPath:         opts.NewPath,
@@ -23,6 +28,7 @@ func newDiffCommand(global *GlobalOptions) *cobra.Command {
 				HeadRef:         opts.HeadRef,
 				EnvFile:         global.EnvFile,
 				EnvInline:       global.EnvInline,
+				Env:             envValues,
 				Threshold:       opts.Threshold,
 				CollectorBinary: global.CollectorBinary,
 				CollectorImage:  semanticOpts.CollectorImage,

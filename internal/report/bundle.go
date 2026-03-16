@@ -45,6 +45,12 @@ func WriteBundle(result model.RunResult) error {
 			return err
 		}
 	}
+	if err := model.WriteJSON(result.Artifacts.ContractsJSON, result.Contracts); err != nil {
+		return err
+	}
+	if err := model.WriteText(result.Artifacts.ContractsMD, RenderContractsMarkdown(result.Contracts)); err != nil {
+		return err
+	}
 	latest := filepath.Join(filepath.Dir(result.Artifacts.RunDir), "latest")
 	_ = os.Remove(latest)
 	_ = os.Symlink(result.Artifacts.RunDir, latest)
@@ -53,6 +59,13 @@ func WriteBundle(result model.RunResult) error {
 
 func WriteAnnotations(result model.RunResult) {
 	count := 0
+	for _, contract := range result.Contracts {
+		if contract.Status != "FAIL" || count >= 3 {
+			continue
+		}
+		fmt.Fprintf(os.Stdout, "::error title=%s::%s (%s)\n", contract.ID, contract.Message, strings.Join(contract.Diff, "; "))
+		count++
+	}
 	for _, finding := range result.Findings {
 		if finding.Severity != model.SeverityFail || count >= 3 {
 			continue

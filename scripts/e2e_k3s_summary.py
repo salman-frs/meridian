@@ -73,6 +73,18 @@ SCENARIO_CONTRACTS: dict[str, dict[str, Any]] = {
     },
 }
 
+GATEWAY_SIGNAL = {
+    "spans": "traces",
+    "logs": "logs",
+    "metrics": "metrics",
+}
+
+SECTION_SIGNAL = {
+    "prometheus": "metrics",
+    "loki": "logs",
+    "tempo": "traces",
+}
+
 
 def load_json(path: pathlib.Path) -> Any | None:
     if not path.exists():
@@ -167,63 +179,240 @@ def collect_events(text: str) -> list[str]:
     return events
 
 
-def evaluate_contract(scenario: str, observed: dict[str, Any]) -> list[str]:
-    contract = SCENARIO_CONTRACTS[scenario]
-    failures: list[str] = []
+def build_contracts(scenario: str, observed: dict[str, Any]) -> list[dict[str, Any]]:
+    expected = SCENARIO_CONTRACTS[scenario]
+    contracts: list[dict[str, Any]] = []
+    fixture = f"k3s/{scenario}"
 
-    for key, expected in contract.get("gateway_positive", {}).items():
-        delta = observed["gateway_deltas"].get(key, 0)
-        if expected and delta <= 0:
-            failures.append(f"expected gateway delta for {key} > 0")
-        if expected is False and delta > 0:
-            failures.append(f"expected gateway delta for {key} to stay <= 0")
+    for key, enabled in expected.get("gateway_positive", {}).items():
+        actual = observed["gateway_deltas"].get(key, 0)
+        contracts.append(
+            contract_result(
+                contract_id=f"gateway-{key}-positive",
+                signal=GATEWAY_SIGNAL[key],
+                fixture=fixture,
+                passed=(actual > 0) if enabled else (actual <= 0),
+                message=f"gateway {key} delta should be positive",
+                observed=f"delta={actual}",
+                expected_text="delta > 0" if enabled else "delta <= 0",
+                diff=[
+                    f"expected gateway delta for {key} > 0"
+                    if enabled
+                    else f"expected gateway delta for {key} to stay <= 0"
+                ],
+                likely_causes=[
+                    "the scenario did not route the expected signal through the gateway",
+                    "collector routing or exporter behavior changed",
+                ],
+                next_steps=[
+                    "inspect summary.json gateway_deltas and the scenario overlay",
+                    "inspect gateway metrics and scenario pod logs",
+                ],
+            )
+        )
 
-    for key, expected in contract.get("gateway_zero", {}).items():
-        delta = observed["gateway_deltas"].get(key, 0)
-        if expected and delta != 0:
-            failures.append(f"expected gateway delta for {key} == 0, got {delta}")
+    for key, enabled in expected.get("gateway_zero", {}).items():
+        actual = observed["gateway_deltas"].get(key, 0)
+        contracts.append(
+            contract_result(
+                contract_id=f"gateway-{key}-zero",
+                signal=GATEWAY_SIGNAL[key],
+                fixture=fixture,
+                passed=(actual == 0) if enabled else (actual != 0),
+                message=f"gateway {key} delta should remain zero",
+                observed=f"delta={actual}",
+                expected_text="delta == 0" if enabled else "delta != 0",
+                diff=[f"expected gateway delta for {key} == 0, got {actual}"],
+                likely_causes=[
+                    "the negative scenario no longer suppresses that signal",
+                    "gateway counters include unexpected traffic for this run",
+                ],
+                next_steps=[
+                    "inspect the scenario overlay for the intended fault injection",
+                    "check service logs and gateway counters for the affected signal",
+                ],
+            )
+        )
 
     for section in ("prometheus", "loki", "tempo"):
-        for key, expected in contract.get(section, {}).items():
+        for key, value in expected.get(section, {}).items():
             actual = observed[section].get(key)
-            if actual != expected:
-                failures.append(f"expected {section}.{key} == {expected}, got {actual}")
+            contracts.append(
+                contract_result(
+                    contract_id=f"{section}-{key.replace('_', '-')}",
+                    signal=SECTION_SIGNAL[section],
+                    fixture=fixture,
+                    passed=(actual == value),
+                    message=f"{section} evidence should match the scenario contract",
+                    observed=f"{section}.{key}={actual}",
+                    expected_text=f"{section}.{key}={value}",
+                    diff=[f"expected {section}.{key} == {value}, got {actual}"],
+                    likely_causes=[
+                        "backend evidence no longer matches the intended scenario behavior",
+                        "run-scoped evidence is missing or contaminated by unrelated telemetry",
+                    ],
+                    next_steps=[
+                        f"inspect {section} artifacts under the scenario bundle",
+                        "check whether the scenario still isolates the expected backend behavior",
+                    ],
+                )
+            )
 
-    for service, events in contract.get("app_events", {}).items():
+    for service, events in expected.get("app_events", {}).items():
         actual_events = set(observed["app_logs"].get(service, {}).get("events", []))
         for event in events:
-            if event not in actual_events:
-                failures.append(f"expected {service} log event {event}")
+            contracts.append(
+                contract_result(
+                    contract_id=f"app-event-{service}-{event.replace('_', '-')}",
+                    signal="logs",
+                    fixture=fixture,
+                    passed=(event in actual_events),
+                    message=f"{service} should emit event {event}",
+                    observed=f"{service} events={sorted(actual_events)}",
+                    expected_text=f"contains {event}",
+                    diff=[f"expected {service} log event {event}"],
+                    likely_causes=[
+                        "application behavior changed for the scenario",
+                        "logs are missing or the event name changed",
+                    ],
+                    next_steps=[
+                        f"inspect logs/{service}.log in the scenario bundle",
+                        "confirm the scenario still drives the expected application path",
+                    ],
+                )
+            )
 
-    for service, events in contract.get("app_events_absent", {}).items():
+    for service, events in expected.get("app_events_absent", {}).items():
         actual_events = set(observed["app_logs"].get(service, {}).get("events", []))
         for event in events:
-            if event in actual_events:
-                failures.append(f"expected {service} log event {event} to be absent")
+            contracts.append(
+                contract_result(
+                    contract_id=f"app-event-absent-{service}-{event.replace('_', '-')}",
+                    signal="logs",
+                    fixture=fixture,
+                    passed=(event not in actual_events),
+                    message=f"{service} should not emit event {event}",
+                    observed=f"{service} events={sorted(actual_events)}",
+                    expected_text=f"excludes {event}",
+                    diff=[f"expected {service} log event {event} to be absent"],
+                    likely_causes=[
+                        "the negative scenario no longer blocks the downstream success path",
+                        "logs are coming from an unexpected code path",
+                    ],
+                    next_steps=[
+                        f"inspect logs/{service}.log in the scenario bundle",
+                        "check auth and downstream dependency settings for the scenario",
+                    ],
+                )
+            )
 
-    for service, expected in contract.get("app_logs_present", {}).items():
+    for service, value in expected.get("app_logs_present", {}).items():
         actual = observed["app_logs"].get(service, {}).get("text_present")
-        if actual != expected:
-            failures.append(f"expected {service} log presence == {expected}, got {actual}")
+        contracts.append(
+            contract_result(
+                contract_id=f"app-log-presence-{service}",
+                signal="logs",
+                fixture=fixture,
+                passed=(actual == value),
+                message=f"{service} log presence should match the scenario contract",
+                observed=f"{service}.text_present={actual}",
+                expected_text=f"{service}.text_present={value}",
+                diff=[f"expected {service} log presence == {value}, got {actual}"],
+                likely_causes=[
+                    "the scenario no longer suppresses or emits pod logs as expected",
+                    "log collection on the VM changed",
+                ],
+                next_steps=[
+                    f"inspect logs/{service}.log in the scenario bundle",
+                    "verify the scenario's log routing or suppression settings",
+                ],
+            )
+        )
 
     combined = observed["combined_log_text"]
-    for event in contract.get("error_events_present", []):
-        if event not in combined:
-            failures.append(f"expected combined logs to contain {event}")
-    for event in contract.get("error_events_absent", []):
-        if event in combined:
-            failures.append(f"expected combined logs to exclude {event}")
+    for event in expected.get("error_events_present", []):
+        contracts.append(
+            contract_result(
+                contract_id=f"combined-error-present-{event.replace('_', '-')}",
+                signal="logs",
+                fixture=fixture,
+                passed=(event in combined),
+                message=f"combined logs should contain {event}",
+                observed=f"contains={event in combined}",
+                expected_text="contains=True",
+                diff=[f"expected combined logs to contain {event}"],
+                likely_causes=[
+                    "the scenario no longer triggers the intended error condition",
+                    "error logs were not collected into the scenario bundle",
+                ],
+                next_steps=[
+                    "inspect combined service logs in the scenario bundle",
+                    "verify the failing backend or auth condition still exists",
+                ],
+            )
+        )
 
-    return failures
+    for event in expected.get("error_events_absent", []):
+        contracts.append(
+            contract_result(
+                contract_id=f"combined-error-absent-{event.replace('_', '-')}",
+                signal="logs",
+                fixture=fixture,
+                passed=(event not in combined),
+                message=f"combined logs should exclude {event}",
+                observed=f"contains={event in combined}",
+                expected_text="contains=False",
+                diff=[f"expected combined logs to exclude {event}"],
+                likely_causes=[
+                    "an unexpected error path is now being exercised",
+                    "the scenario is leaking unrelated failures into the run",
+                ],
+                next_steps=[
+                    "inspect combined service logs in the scenario bundle",
+                    "check whether the scenario overlay changed collector or app behavior",
+                ],
+            )
+        )
+
+    return contracts
+
+
+def contract_result(
+    contract_id: str,
+    signal: str,
+    fixture: str,
+    passed: bool,
+    message: str,
+    observed: str,
+    expected_text: str,
+    diff: list[str],
+    likely_causes: list[str],
+    next_steps: list[str],
+) -> dict[str, Any]:
+    return {
+        "id": contract_id,
+        "severity": "fail",
+        "signal": signal,
+        "fixture": fixture,
+        "status": "PASS" if passed else "FAIL",
+        "message": message if passed else "contract failed",
+        "observed": observed,
+        "expected": expected_text,
+        "diff": [] if passed else diff,
+        "likely_causes": [] if passed else likely_causes,
+        "next_steps": [] if passed else next_steps,
+    }
 
 
 def build_summary(artifact_dir: pathlib.Path, scenario: str, run_id: str, deltas: dict[str, float]) -> dict[str, Any]:
     observed = build_observed(artifact_dir, deltas)
-    failures = evaluate_contract(scenario, observed)
+    contracts = build_contracts(scenario, observed)
+    failed_contracts = [item for item in contracts if item["status"] == "FAIL"]
+    failures = [item["diff"][0] for item in failed_contracts if item["diff"]]
     return {
         "run_id": run_id,
         "scenario": scenario,
-        "result": "PASS" if not failures else "FAIL",
+        "result": "PASS" if not failed_contracts else "FAIL",
         "expected": SCENARIO_CONTRACTS[scenario],
         "observed": {
             "gateway_deltas": observed["gateway_deltas"],
@@ -239,6 +428,12 @@ def build_summary(artifact_dir: pathlib.Path, scenario: str, run_id: str, deltas
             },
         },
         "failures": failures,
+        "contracts": contracts,
+        "contract_summary": {
+            "total": len(contracts),
+            "pass": len(contracts) - len(failed_contracts),
+            "fail": len(failed_contracts),
+        },
     }
 
 
@@ -250,6 +445,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
         f"- run_id: `{summary['run_id']}`",
         f"- scenario: `{summary['scenario']}`",
         f"- result: `{summary['result']}`",
+        f"- contract summary: `{summary['contract_summary']['pass']}/{summary['contract_summary']['total']} passed`",
         f"- spans delta: `{observed['gateway_deltas'].get('spans', 0)}`",
         f"- logs delta: `{observed['gateway_deltas'].get('logs', 0)}`",
         f"- metrics delta: `{observed['gateway_deltas'].get('metrics', 0)}`",
@@ -264,9 +460,22 @@ def render_markdown(summary: dict[str, Any]) -> str:
         events = ", ".join(payload["events"]) if payload["events"] else "none"
         lines.append(f"- {service} events: `{events}`")
 
-    if summary["failures"]:
-        lines.extend(["", "## Failures"])
-        lines.extend([f"- {item}" for item in summary["failures"]])
+    lines.extend(["", "## Contract checks"])
+    for contract in summary["contracts"]:
+        lines.append(f"- `{contract['id']}`: {contract['status']} ({contract['signal']})")
+        for item in contract["diff"]:
+            lines.append(f"  - {item}")
+
+    failing = next((item for item in summary["contracts"] if item["status"] == "FAIL"), None)
+    if failing is not None:
+        lines.extend(["", "## Top contract failure"])
+        lines.append(f"- `{failing['id']}`: {failing['message']}")
+        for item in failing["diff"]:
+            lines.append(f"- Diff: {item}")
+        for item in failing["likely_causes"]:
+            lines.append(f"- Likely cause: {item}")
+        for item in failing["next_steps"]:
+            lines.append(f"- Next step: {item}")
     else:
         lines.extend(["", "## Result", "- PASS"])
     return "\n".join(lines) + "\n"
@@ -294,7 +503,7 @@ def main(argv: list[str]) -> int:
     summary = build_summary(artifact_dir, scenario, run_id, deltas)
     (artifact_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     (artifact_dir / "summary.md").write_text(render_markdown(summary))
-    return 0 if not summary["failures"] else 2
+    return 0
 
 
 if __name__ == "__main__":

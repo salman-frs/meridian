@@ -55,10 +55,15 @@ func newValidateCommand(global *GlobalOptions) *cobra.Command {
 			default:
 				return &model.ExitError{Code: 2, Err: err}
 			}
+			semanticEnv, err := configio.LoadEnv(global.EnvFile, global.EnvInline, true)
+			if err != nil {
+				return &model.ExitError{Code: 2, Err: err}
+			}
 
 			semantic, err := collector.Analyze(collector.Options{
 				ConfigSources:   sources,
 				ConfigModel:     cfg,
+				Env:             semanticEnv,
 				CollectorBinary: global.CollectorBinary,
 				CollectorImage:  semanticOpts.CollectorImage,
 				Engine:          model.RuntimeEngine(semanticOpts.Engine),

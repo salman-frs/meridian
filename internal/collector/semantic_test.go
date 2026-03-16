@@ -22,6 +22,7 @@ func TestAnalyzeWithCollectorBinary(t *testing.T) {
 	report, err := Analyze(Options{
 		ConfigSources:   []string{configPath},
 		ConfigModel:     model.ConfigModel{SourcePaths: []string{configPath}, Receivers: map[string]model.Component{"otlp": {Name: "otlp"}}, Processors: map[string]model.Component{"batch": {Name: "batch"}}, Exporters: map[string]model.Component{"debug": {Name: "debug"}}},
+		Env:             map[string]string{"MERIDIAN_TEST_ENV": "from-env"},
 		CollectorBinary: binaryPath,
 		RequireSemantic: true,
 	})
@@ -36,6 +37,9 @@ func TestAnalyzeWithCollectorBinary(t *testing.T) {
 	}
 	if !strings.Contains(report.FinalConfig, "service:") {
 		t.Fatalf("Analyze() final config = %q, want rendered config", report.FinalConfig)
+	}
+	if !strings.Contains(report.FinalConfig, "from-env") {
+		t.Fatalf("Analyze() final config = %q, want env propagated", report.FinalConfig)
 	}
 }
 
@@ -63,6 +67,101 @@ func TestAnalyzeFlagsUnsupportedComponentFromInventory(t *testing.T) {
 	}
 }
 
+func TestMaterializeConfigParsesRenderedOutput(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "collector.yaml")
+	if err := os.WriteFile(configPath, []byte("service: {}\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+	binaryPath := writeFakeCollector(t, dir)
+
+	cfg, finalConfig, ok, err := MaterializeConfig(Options{
+		ConfigSources:   []string{configPath},
+		ConfigModel:     model.ConfigModel{SourcePaths: []string{configPath}},
+		Env:             map[string]string{"MERIDIAN_TEST_ENV": "from-env"},
+		CollectorBinary: binaryPath,
+	})
+	if err != nil {
+		t.Fatalf("MaterializeConfig() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("MaterializeConfig() ok = false, want true")
+	}
+	if !strings.Contains(finalConfig, "service:") {
+		t.Fatalf("MaterializeConfig() final config = %q, want rendered yaml", finalConfig)
+	}
+	if len(cfg.Pipelines) != 1 {
+		t.Fatalf("MaterializeConfig() pipelines = %d, want 1", len(cfg.Pipelines))
+	}
+}
+
+func TestSemanticContainerRunArgs(t *testing.T) {
+	t.Parallel()
+
+	if got := semanticContainerRunArgs(model.RuntimeEngineContainerd, "nerdctl"); len(got) != 2 || got[0] != "--network" || got[1] != "host" {
+		t.Fatalf("semanticContainerRunArgs(containerd, nerdctl) = %#v, want host networking args", got)
+	}
+	if got := semanticContainerRunArgs(model.RuntimeEngineDocker, "docker"); got != nil {
+		t.Fatalf("semanticContainerRunArgs(docker, docker) = %#v, want nil", got)
+	}
+	if got := semanticContainerRunArgs(model.RuntimeEngineContainerd, "lima nerdctl"); got != nil {
+		t.Fatalf("semanticContainerRunArgs(containerd, lima nerdctl) = %#v, want nil", got)
+	}
+}
+
+func TestParseComponentsStructuredOutput(t *testing.T) {
+	t.Parallel()
+
+	output := `buildinfo:
+  command: otelcol-contrib
+receivers:
+  - name: otlp
+    module: go.opentelemetry.io/collector/receiver/otlpreceiver v0.147.0
+    stability:
+      logs: Beta
+      metrics: Beta
+      traces: Beta
+processors:
+  - name: batch
+    module: go.opentelemetry.io/collector/processor/batchprocessor v0.147.0
+    stability:
+      traces: Beta
+exporters:
+  - name: debug
+    module: go.opentelemetry.io/collector/exporter/debugexporter v0.147.0
+    stability:
+      logs: Alpha
+      metrics: Alpha
+      traces: Alpha
+connectors:
+  - name: routing
+    module: github.com/open-telemetry/opentelemetry-collector-contrib/connector/routingconnector v0.147.0
+    stability:
+      traces-to-traces: Alpha
+extensions:
+  - name: health_check
+    module: github.com/open-telemetry/opentelemetry-collector-contrib/extension/healthcheckextension v0.147.0
+    stability:
+      extension: Alpha
+providers:
+  - scheme: yaml
+    module: go.opentelemetry.io/collector/confmap/provider/yamlprovider v1.53.0
+`
+
+	components := parseComponents(output)
+	if len(components) != 5 {
+		t.Fatalf("parseComponents() count = %d, want 5", len(components))
+	}
+	if got := components[0]; got.Kind != "receiver" || got.Name != "otlp" || got.Stability != "beta" {
+		t.Fatalf("parseComponents() receiver = %#v, want otlp beta receiver", got)
+	}
+	if got := components[2]; got.Kind != "exporter" || got.Name != "debug" || got.Stability != "alpha" {
+		t.Fatalf("parseComponents() exporter = %#v, want debug alpha exporter", got)
+	}
+}
+
 func writeFakeCollector(t *testing.T, dir string) string {
 	t.Helper()
 	path := filepath.Join(dir, "fake-otelcol.sh")
@@ -85,8 +184,11 @@ EOF
     echo "validation passed"
     ;;
   print-config)
-    cat <<'EOF'
+    cat <<EOF
 service:
+  telemetry:
+    logs:
+      level: ${MERIDIAN_TEST_ENV}
   pipelines:
     traces:
       receivers: [otlp]

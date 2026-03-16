@@ -37,6 +37,9 @@ class K3sSummaryTests(unittest.TestCase):
 
             self.assertEqual(summary["result"], "PASS")
             self.assertEqual(summary["failures"], [])
+            self.assertGreater(len(summary["contracts"]), 0)
+            self.assertEqual(summary["contract_summary"]["fail"], 0)
+            self.assertIn("gateway-spans-positive", [item["id"] for item in summary["contracts"]])
 
     def test_backend_unreachable_requires_otel_error_and_absent_backends(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -57,6 +60,8 @@ class K3sSummaryTests(unittest.TestCase):
             )
 
             self.assertEqual(summary["result"], "PASS")
+            self.assertGreater(len(summary["contracts"]), 0)
+            self.assertIn("combined-error-present-otel-error", [item["id"] for item in summary["contracts"]])
 
     def test_drop_traces_passes_when_spans_are_zero(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -82,6 +87,9 @@ class K3sSummaryTests(unittest.TestCase):
             )
 
             self.assertEqual(summary["result"], "PASS")
+            spans_zero = next(item for item in summary["contracts"] if item["id"] == "gateway-spans-zero")
+            self.assertEqual(spans_zero["status"], "PASS")
+            self.assertEqual(spans_zero["signal"], "traces")
 
     def test_misroute_logs_passes_with_logs_absent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -100,6 +108,38 @@ class K3sSummaryTests(unittest.TestCase):
             )
 
             self.assertEqual(summary["result"], "PASS")
+            loki_contract = next(item for item in summary["contracts"] if item["id"] == "loki-storefront-run-logs")
+            self.assertEqual(loki_contract["status"], "PASS")
+            self.assertEqual(loki_contract["signal"], "logs")
+
+    def test_failure_derives_from_failed_contracts_and_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = pathlib.Path(tmp)
+            self._write_payload(artifact_dir / "prom-http-requests.json", {"data": {"result": [1]}})
+            self._write_payload(artifact_dir / "prom-checkout.json", {"data": {"result": [1]}})
+            self._write_payload(artifact_dir / "prom-heartbeat.json", {"data": {"result": [1]}})
+            self._write_logs(
+                artifact_dir,
+                storefront=["browse_request"],
+                checkout=["checkout_processed"],
+                inventory=["inventory_reserved"],
+                trafficgen=["trafficgen_completed"],
+            )
+
+            summary = MODULE.build_summary(
+                artifact_dir,
+                "happy",
+                "run-999",
+                {"spans": 0, "logs": 1, "metrics": 1},
+            )
+
+            self.assertEqual(summary["result"], "FAIL")
+            failed_contracts = [item for item in summary["contracts"] if item["status"] == "FAIL"]
+            self.assertGreater(len(failed_contracts), 0)
+            self.assertEqual(summary["failures"], [item["diff"][0] for item in failed_contracts if item["diff"]])
+            markdown = MODULE.render_markdown(summary)
+            self.assertIn("## Top contract failure", markdown)
+            self.assertIn(failed_contracts[0]["diff"][0], markdown)
 
     def _write_payload(self, path: pathlib.Path, payload: dict) -> None:
         path.write_text(MODULE.json.dumps(payload))

@@ -5,7 +5,9 @@ Engine: docker
 Runtime backend: docker
 Mode: safe
 Collector image: otel/test:latest
+Runtime config: collector-rendered effective config
 Semantic validation: PASS
+Contracts: FAIL (1/1 contract(s) failed)
 Artifacts: 
 
 What changed (risk highlights):
@@ -15,6 +17,18 @@ Semantic validation:
 - components: PASS
 - validate: PASS
 - print-config: PASS
+
+Contract checks:
+- redaction-contract: FAIL (contract failed observed 1 matching item(s) expected min_count=1, attributes absent)
+
+Contract diff:
+- "http.request.header.authorization" should be absent from every matched item, but was present in 1 item(s)
+
+Likely causes:
+- redaction contract
+
+Next steps:
+- inspect capture.normalized.json
 
 Runtime assertions:
 - traces-received: FAIL (received at least one item observed 0 expected >=1)
@@ -34,4 +48,7 @@ Artifacts:
 - /tmp/config.final.yaml
 - 
 - 
+- /tmp/contracts.json
+- /tmp/contracts.md
+- /tmp/capture.normalized.json
 - 

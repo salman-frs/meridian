@@ -33,8 +33,8 @@ func LoadConfig(opts LoadOptions) (model.ConfigModel, error) {
 	if err != nil {
 		return model.ConfigModel{}, err
 	}
-	localSources := LocalConfigSources(sources)
-	if len(localSources) == 0 {
+	materialized := 0
+	if !hasMaterializableConfigSource(sources) {
 		return model.ConfigModel{SourcePaths: sources}, ErrNoLocalConfigSource
 	}
 
@@ -46,18 +46,25 @@ func LoadConfig(opts LoadOptions) (model.ConfigModel, error) {
 	merged := map[string]any{}
 	allRefs := []model.EnvReference{}
 	allMissing := []string{}
-	for _, path := range localSources {
-		content, err := os.ReadFile(path)
+	for _, source := range sources {
+		path, content, ok, err := materializeConfigSource(source)
 		if err != nil {
 			return model.ConfigModel{}, err
 		}
-		doc, refs, missing, err := parseYAMLDocument(path, string(content), env)
+		if !ok {
+			continue
+		}
+		materialized++
+		doc, refs, missing, err := parseYAMLDocument(path, content, env)
 		if err != nil {
 			return model.ConfigModel{}, err
 		}
 		merged = mergeMaps(merged, doc)
 		allRefs = append(allRefs, refs...)
 		allMissing = append(allMissing, missing...)
+	}
+	if materialized == 0 {
+		return model.ConfigModel{SourcePaths: sources}, ErrNoLocalConfigSource
 	}
 	cfg := normalizeConfig(sources, merged)
 	cfg.EnvReferences = allRefs
@@ -102,6 +109,13 @@ func LocalConfigSources(sources []string) []string {
 		}
 	}
 	return out
+}
+
+func IsMaterializableConfigSource(source string) bool {
+	if _, ok := localConfigPath(source); ok {
+		return true
+	}
+	return strings.HasPrefix(source, "yaml:")
 }
 
 func LoadConfigText(source string, content string) (model.ConfigModel, error) {
@@ -278,6 +292,29 @@ func localConfigPath(source string) (string, bool) {
 		return "", false
 	}
 	return parsed.Path, true
+}
+
+func materializeConfigSource(source string) (string, string, bool, error) {
+	if path, ok := localConfigPath(source); ok {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return "", "", false, err
+		}
+		return path, string(content), true, nil
+	}
+	if strings.HasPrefix(source, "yaml:") {
+		return source, strings.TrimPrefix(source, "yaml:"), true, nil
+	}
+	return "", "", false, nil
+}
+
+func hasMaterializableConfigSource(sources []string) bool {
+	for _, source := range sources {
+		if IsMaterializableConfigSource(source) {
+			return true
+		}
+	}
+	return false
 }
 
 func isConfigURI(source string) bool {

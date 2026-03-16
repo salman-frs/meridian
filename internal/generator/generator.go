@@ -3,7 +3,10 @@ package generator
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/salman-frs/meridian/internal/model"
@@ -19,6 +22,24 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+const (
+	FixturePassThrough     = "pass-through"
+	FixtureRedaction       = "redaction"
+	FixtureFilterDrop      = "filter-drop"
+	FixtureRoutingCopy     = "routing-copy"
+	FixtureRoutingMove     = "routing-move"
+	FixtureMetricTransform = "metric-transform"
+)
+
+var knownFixtures = []string{
+	FixturePassThrough,
+	FixtureRedaction,
+	FixtureFilterDrop,
+	FixtureRoutingCopy,
+	FixtureRoutingMove,
+	FixtureMetricTransform,
+}
+
 type Generator struct {
 	address string
 	seed    int64
@@ -28,6 +49,14 @@ func New(address string, seed int64) *Generator {
 	return &Generator{address: address, seed: seed}
 }
 
+func KnownFixtures() []string {
+	return slices.Clone(knownFixtures)
+}
+
+func IsKnownFixture(name string) bool {
+	return slices.Contains(knownFixtures, name)
+}
+
 func (g *Generator) Send(ctx context.Context, plan model.TestPlan) error {
 	conn, err := grpc.NewClient(g.address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -35,6 +64,18 @@ func (g *Generator) Send(ctx context.Context, plan model.TestPlan) error {
 	}
 	defer conn.Close()
 
+	if len(plan.Fixtures) == 0 {
+		return g.sendLegacy(ctx, conn, plan)
+	}
+	for _, fixture := range plan.Fixtures {
+		if err := g.sendFixture(ctx, conn, plan, fixture); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (g *Generator) sendLegacy(ctx context.Context, conn *grpc.ClientConn, plan model.TestPlan) error {
 	if hasSignal(plan.Signals, model.SignalTraces) {
 		if err := g.sendTraces(ctx, conn, plan.RunID); err != nil {
 			return err
@@ -51,6 +92,25 @@ func (g *Generator) Send(ctx context.Context, plan model.TestPlan) error {
 		}
 	}
 	return nil
+}
+
+func (g *Generator) sendFixture(ctx context.Context, conn *grpc.ClientConn, plan model.TestPlan, fixture string) error {
+	switch fixture {
+	case FixturePassThrough:
+		return g.sendPassThroughFixture(ctx, conn, plan)
+	case FixtureRedaction:
+		return g.sendRedactionFixture(ctx, conn, plan)
+	case FixtureFilterDrop:
+		return g.sendFilterDropFixture(ctx, conn, plan)
+	case FixtureRoutingCopy:
+		return g.sendRoutingFixture(ctx, conn, plan, FixtureRoutingCopy)
+	case FixtureRoutingMove:
+		return g.sendRoutingFixture(ctx, conn, plan, FixtureRoutingMove)
+	case FixtureMetricTransform:
+		return g.sendMetricTransformFixture(ctx, conn, plan)
+	default:
+		return fmt.Errorf("unknown fixture %q", fixture)
+	}
 }
 
 func (g *Generator) sendTraces(ctx context.Context, conn *grpc.ClientConn, runID string) error {
@@ -72,19 +132,7 @@ func (g *Generator) sendTraces(ctx context.Context, conn *grpc.ClientConn, runID
 			},
 		})
 	}
-	_, err := client.Export(ctx, &collecttrace.ExportTraceServiceRequest{
-		ResourceSpans: []*tracev1.ResourceSpans{
-			{
-				Resource: &resourcev1.Resource{Attributes: resourceAttrs(runID)},
-				ScopeSpans: []*tracev1.ScopeSpans{
-					{
-						Spans: spans,
-					},
-				},
-			},
-		},
-	})
-	return err
+	return sendTraceBatch(ctx, client, resourceAttrs(runID, ""), spans)
 }
 
 func (g *Generator) sendMetrics(ctx context.Context, conn *grpc.ClientConn, runID string) error {
@@ -103,30 +151,7 @@ func (g *Generator) sendMetrics(ctx context.Context, conn *grpc.ClientConn, runI
 			StartTimeUnixNano: uint64(time.Now().Add(-time.Second).UnixNano()),
 		})
 	}
-	_, err := client.Export(ctx, &collectmetrics.ExportMetricsServiceRequest{
-		ResourceMetrics: []*metricsv1.ResourceMetrics{
-			{
-				Resource: &resourcev1.Resource{Attributes: resourceAttrs(runID)},
-				ScopeMetrics: []*metricsv1.ScopeMetrics{
-					{
-						Metrics: []*metricsv1.Metric{
-							{
-								Name: "meridian.synthetic.metric",
-								Data: &metricsv1.Metric_Sum{
-									Sum: &metricsv1.Sum{
-										DataPoints: points,
-										AggregationTemporality: metricsv1.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
-										IsMonotonic:            true,
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	})
-	return err
+	return sendMetricBatch(ctx, client, resourceAttrs(runID, ""), "meridian.synthetic.metric", points)
 }
 
 func (g *Generator) sendLogs(ctx context.Context, conn *grpc.ClientConn, runID string) error {
@@ -142,13 +167,174 @@ func (g *Generator) sendLogs(ctx context.Context, conn *grpc.ClientConn, runID s
 			},
 		})
 	}
-	_, err := client.Export(ctx, &collectlogs.ExportLogsServiceRequest{
-		ResourceLogs: []*logsv1.ResourceLogs{
+	return sendLogBatch(ctx, client, resourceAttrs(runID, ""), records)
+}
+
+func (g *Generator) sendPassThroughFixture(ctx context.Context, conn *grpc.ClientConn, plan model.TestPlan) error {
+	if hasSignal(plan.Signals, model.SignalTraces) {
+		if err := sendFixtureTrace(ctx, conn, g.seed, plan.RunID, FixturePassThrough, "meridian.synthetic.pass_through", map[string]string{
+			"http.route": "/browse",
+		}); err != nil {
+			return err
+		}
+	}
+	if hasSignal(plan.Signals, model.SignalMetrics) {
+		if err := sendFixtureMetric(ctx, conn, plan.RunID, FixturePassThrough, "meridian.synthetic.metric.pass_through", 1, map[string]string{
+			"fixture.mode": "pass-through",
+		}); err != nil {
+			return err
+		}
+	}
+	if hasSignal(plan.Signals, model.SignalLogs) {
+		if err := sendFixtureLog(ctx, conn, plan.RunID, FixturePassThrough, "meridian synthetic log pass-through", map[string]string{
+			"fixture.mode": "pass-through",
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (g *Generator) sendRedactionFixture(ctx context.Context, conn *grpc.ClientConn, plan model.TestPlan) error {
+	if !hasSignal(plan.Signals, model.SignalTraces) {
+		return nil
+	}
+	return sendFixtureTrace(ctx, conn, g.seed+100, plan.RunID, FixtureRedaction, "meridian.synthetic.redaction", map[string]string{
+		"http.route":                        "/checkout",
+		"http.request.header.authorization": "Bearer meridian-secret",
+	})
+}
+
+func (g *Generator) sendFilterDropFixture(ctx context.Context, conn *grpc.ClientConn, plan model.TestPlan) error {
+	if !hasSignal(plan.Signals, model.SignalTraces) {
+		return nil
+	}
+	return sendFixtureTrace(ctx, conn, g.seed+200, plan.RunID, FixtureFilterDrop, "meridian.synthetic.filter_drop", map[string]string{
+		"http.route": "/checkout",
+	})
+}
+
+func (g *Generator) sendRoutingFixture(ctx context.Context, conn *grpc.ClientConn, plan model.TestPlan, fixture string) error {
+	attrs := map[string]string{
+		"routing.key":     "gold",
+		"routing.fixture": fixture,
+	}
+	if hasSignal(plan.Signals, model.SignalTraces) {
+		if err := sendFixtureTrace(ctx, conn, g.seed+300, plan.RunID, fixture, "meridian.synthetic."+sanitizeFixtureName(fixture), attrs); err != nil {
+			return err
+		}
+	}
+	if hasSignal(plan.Signals, model.SignalLogs) {
+		if err := sendFixtureLog(ctx, conn, plan.RunID, fixture, "meridian synthetic "+fixture+" log", attrs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (g *Generator) sendMetricTransformFixture(ctx context.Context, conn *grpc.ClientConn, plan model.TestPlan) error {
+	if !hasSignal(plan.Signals, model.SignalMetrics) {
+		return nil
+	}
+	return sendFixtureMetric(ctx, conn, plan.RunID, FixtureMetricTransform, "meridian.synthetic.metric.raw", 2, map[string]string{
+		"metric.fixture": "transform",
+	})
+}
+
+func sendFixtureTrace(ctx context.Context, conn *grpc.ClientConn, seed int64, runID string, fixture string, spanName string, attrsMap map[string]string) error {
+	client := collecttrace.NewTraceServiceClient(conn)
+	traceID, spanID := ids(seed)
+	attributes := []*commonv1.KeyValue{
+		attr("meridian.run_id", runID),
+		attr("meridian.fixture", fixture),
+	}
+	for key, value := range attrsMap {
+		attributes = append(attributes, attr(key, value))
+	}
+	return sendTraceBatch(ctx, client, resourceAttrs(runID, fixture), []*tracev1.Span{
+		{
+			Name:              spanName,
+			TraceId:           traceID,
+			SpanId:            spanID,
+			StartTimeUnixNano: uint64(time.Now().Add(-time.Second).UnixNano()),
+			EndTimeUnixNano:   uint64(time.Now().UnixNano()),
+			Attributes:        attributes,
+		},
+	})
+}
+
+func sendFixtureMetric(ctx context.Context, conn *grpc.ClientConn, runID string, fixture string, metricName string, value float64, attrsMap map[string]string) error {
+	client := collectmetrics.NewMetricsServiceClient(conn)
+	attributes := []*commonv1.KeyValue{
+		attr("meridian.run_id", runID),
+		attr("meridian.fixture", fixture),
+	}
+	for key, item := range attrsMap {
+		attributes = append(attributes, attr(key, item))
+	}
+	return sendMetricBatch(ctx, client, resourceAttrs(runID, fixture), metricName, []*metricsv1.NumberDataPoint{
+		{
+			Attributes: attributes,
+			Value: &metricsv1.NumberDataPoint_AsDouble{
+				AsDouble: value,
+			},
+			TimeUnixNano:      uint64(time.Now().UnixNano()),
+			StartTimeUnixNano: uint64(time.Now().Add(-time.Second).UnixNano()),
+		},
+	})
+}
+
+func sendFixtureLog(ctx context.Context, conn *grpc.ClientConn, runID string, fixture string, body string, attrsMap map[string]string) error {
+	client := collectlogs.NewLogsServiceClient(conn)
+	attributes := []*commonv1.KeyValue{
+		attr("meridian.run_id", runID),
+		attr("meridian.fixture", fixture),
+	}
+	for key, item := range attrsMap {
+		attributes = append(attributes, attr(key, item))
+	}
+	return sendLogBatch(ctx, client, resourceAttrs(runID, fixture), []*logsv1.LogRecord{
+		{
+			TimeUnixNano: uint64(time.Now().UnixNano()),
+			Body:         &commonv1.AnyValue{Value: &commonv1.AnyValue_StringValue{StringValue: body}},
+			Attributes:   attributes,
+		},
+	})
+}
+
+func sendTraceBatch(ctx context.Context, client collecttrace.TraceServiceClient, resource []*commonv1.KeyValue, spans []*tracev1.Span) error {
+	_, err := client.Export(ctx, &collecttrace.ExportTraceServiceRequest{
+		ResourceSpans: []*tracev1.ResourceSpans{
 			{
-				Resource: &resourcev1.Resource{Attributes: resourceAttrs(runID)},
-				ScopeLogs: []*logsv1.ScopeLogs{
+				Resource: &resourcev1.Resource{Attributes: resource},
+				ScopeSpans: []*tracev1.ScopeSpans{
+					{Spans: spans},
+				},
+			},
+		},
+	})
+	return err
+}
+
+func sendMetricBatch(ctx context.Context, client collectmetrics.MetricsServiceClient, resource []*commonv1.KeyValue, metricName string, points []*metricsv1.NumberDataPoint) error {
+	_, err := client.Export(ctx, &collectmetrics.ExportMetricsServiceRequest{
+		ResourceMetrics: []*metricsv1.ResourceMetrics{
+			{
+				Resource: &resourcev1.Resource{Attributes: resource},
+				ScopeMetrics: []*metricsv1.ScopeMetrics{
 					{
-						LogRecords: records,
+						Metrics: []*metricsv1.Metric{
+							{
+								Name: metricName,
+								Data: &metricsv1.Metric_Sum{
+									Sum: &metricsv1.Sum{
+										DataPoints:             points,
+										AggregationTemporality: metricsv1.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE,
+										IsMonotonic:            true,
+									},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -157,11 +343,29 @@ func (g *Generator) sendLogs(ctx context.Context, conn *grpc.ClientConn, runID s
 	return err
 }
 
-func resourceAttrs(runID string) []*commonv1.KeyValue {
-	return []*commonv1.KeyValue{
+func sendLogBatch(ctx context.Context, client collectlogs.LogsServiceClient, resource []*commonv1.KeyValue, records []*logsv1.LogRecord) error {
+	_, err := client.Export(ctx, &collectlogs.ExportLogsServiceRequest{
+		ResourceLogs: []*logsv1.ResourceLogs{
+			{
+				Resource: &resourcev1.Resource{Attributes: resource},
+				ScopeLogs: []*logsv1.ScopeLogs{
+					{LogRecords: records},
+				},
+			},
+		},
+	})
+	return err
+}
+
+func resourceAttrs(runID string, fixture string) []*commonv1.KeyValue {
+	items := []*commonv1.KeyValue{
 		attr("service.name", "meridian"),
 		attr("meridian.run_id", runID),
 	}
+	if fixture != "" {
+		items = append(items, attr("meridian.fixture", fixture))
+	}
+	return items
 }
 
 func attr(key string, value string) *commonv1.KeyValue {
@@ -191,4 +395,8 @@ func hasSignal(signals []model.SignalType, signal model.SignalType) bool {
 		}
 	}
 	return false
+}
+
+func sanitizeFixtureName(value string) string {
+	return strings.ReplaceAll(value, "-", "_")
 }
