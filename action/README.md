@@ -1,11 +1,10 @@
 # Meridian Action
 
-This composite action builds the Meridian CLI from the checked-out repository, runs `meridian ci`, uploads the generated artifacts, and updates a single PR comment marked with `<!-- meridian-comment -->` when comment mode is enabled.
+This composite action builds Meridian from the checked-out repository, runs `meridian ci`, uploads artifacts, and can update a PR comment marked with `<!-- meridian-comment -->`.
 
-The action accepts the same runtime selector as the CLI through the `engine` input: `auto`, `docker`, or `containerd`. For GitHub Actions, `containerd` is intended for Linux runners with `nerdctl` installed.
+Use `uses: ./action` for local development inside this repository. External repositories should use `salman-frs/meridian/action@v1`.
 
-Use the `assertions` input for either a legacy `v1` assertions file or a `v2` contracts/fixtures file.
+Reference documentation now lives in the docs site:
 
-Use `uses: ./action` for local development in this repository. The published `meridian/action@v1` tag is intended for external repos once release binaries and checksums are published.
-
-This action currently depends on `actions/upload-artifact@v4`, so it is not GHES-compatible as written.
+- [GitHub Action task guide](https://salman-frs.github.io/meridian/tasks/github-action/)
+- [GitHub Action reference](https://salman-frs.github.io/meridian/reference/action/)

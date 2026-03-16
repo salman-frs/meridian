@@ -1,0 +1,117 @@
+site_name: Meridian
+site_description: OSS documentation for Meridian, the CLI and GitHub Action for reviewing OpenTelemetry Collector configs.
+site_url: https://salman-frs.github.io/meridian/
+repo_url: https://github.com/salman-frs/meridian
+repo_name: salman-frs/meridian
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  logo: assets/logo/wordmark.svg
+  favicon: assets/logo/mark.svg
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: amber
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: amber
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra:
+  version:
+    provider: mike
+
+extra_css:
+  - assets/stylesheets/extra.css
+
+validation:
+  omitted_files: warn
+  absolute_links: relative_to_docs
+  unrecognized_links: warn
+
+nav:
+  - Overview:
+      - Home: index.md
+      - Quickstart: overview/quickstart.md
+      - Install: overview/install.md
+      - Release Policy: overview/releases.md
+  - Concepts:
+      - Runtime Modes: concepts/runtime-modes.md
+      - Semantic Validation: concepts/semantic-validation.md
+      - Diff-Aware Review: concepts/diff-review.md
+      - Artifact Model: concepts/artifacts.md
+      - Runtime Engines: concepts/runtime-engines.md
+      - K3s Fixture: concepts/k3s-fixture.md
+  - Tasks:
+      - First Local Run: tasks/first-run.md
+      - Choose A Runtime Engine: tasks/container-engines.md
+      - Write Assertions And Contracts: tasks/assertions-contracts.md
+      - Review A Config Diff: tasks/diff-a-change.md
+      - Inspect Artifacts: tasks/inspect-artifacts.md
+      - Debug Failures: tasks/debug-failures.md
+      - Use The GitHub Action: tasks/github-action.md
+  - Tutorials:
+      - Local End-To-End Walkthrough: tutorials/local-validation.md
+      - Pull Request Workflow: tutorials/pull-request-flow.md
+      - K3s Regression Workflow: tutorials/k3s-regression.md
+  - Reference:
+      - Overview: reference/index.md
+      - CLI Reference:
+          - CLI Overview: reference/cli/index.md
+          - meridian: reference/cli/meridian.md
+          - meridian check: reference/cli/meridian_check.md
+          - meridian ci: reference/cli/meridian_ci.md
+          - meridian completion: reference/cli/meridian_completion.md
+          - meridian debug: reference/cli/meridian_debug.md
+          - meridian debug bundle: reference/cli/meridian_debug_bundle.md
+          - meridian debug capture: reference/cli/meridian_debug_capture.md
+          - meridian debug logs: reference/cli/meridian_debug_logs.md
+          - meridian debug summary: reference/cli/meridian_debug_summary.md
+          - meridian diff: reference/cli/meridian_diff.md
+          - meridian graph: reference/cli/meridian_graph.md
+          - meridian test: reference/cli/meridian_test.md
+          - meridian validate: reference/cli/meridian_validate.md
+          - meridian version: reference/cli/meridian_version.md
+      - GitHub Action: reference/action.md
+      - Artifact Contract: reference/artifact-contract.md
+      - Config Inputs: reference/config-inputs.md
+      - Examples: reference/examples.md
+      - Exit Codes: reference/exit-codes.md
+  - Contribute:
+      - Contributor Guide: contribute/index.md
+      - Docs Authoring: contribute/docs.md
+      - Release Docs Workflow: contribute/releases.md

@@ -4,3 +4,5 @@
 /meridian-artifacts/
 *.tmp.yaml
 **/__pycache__/**
+.venv/
+site/
