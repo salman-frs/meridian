@@ -1,0 +1,23 @@
+:root {
+  --md-primary-fg-color: #0f766e;
+  --md-accent-fg-color: #b45309;
+}
+
+[data-md-color-scheme="default"] {
+  --md-default-bg-color: #f8fafc;
+}
+
+.md-header {
+  border-bottom: 1px solid rgba(15, 118, 110, 0.12);
+}
+
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+  letter-spacing: -0.02em;
+}
+
+.md-typeset .admonition,
+.md-typeset details {
+  border-radius: 0.6rem;
+}
