@@ -1,13 +1,8 @@
 # Config Inputs
 
-Meridian supports multiple ways to provide Collector config.
-
 ## Repeatable `--config`
 
-`--config` is repeatable and accepts:
-
-- local file paths
-- Collector-native config URIs
+`--config` accepts repeatable config sources, including local files and supported Collector-native URIs.
 
 Example:
 
@@ -19,34 +14,32 @@ Example:
 
 ## `--config-dir`
 
-Use `--config-dir` when your Collector config is already rendered into a directory layout.
+Use `--config-dir` when the configuration already exists as a rendered directory of YAML files.
 
 ```bash
 ./bin/meridian validate --config-dir ./rendered-config
 ```
 
-## Env interpolation
+## Materializable vs non-materializable sources
 
-Meridian resolves env values from:
+Meridian can reason repo-side about:
+
+- local YAML files
+- `yaml:` sources
+
+Sources that cannot be materialized locally may still be valid for Collector-native semantic validation, but they reduce what Meridian can inspect without `print-config`.
+
+## Env resolution
+
+Env values are resolved from:
 
 1. `--env-file`
 2. repeatable `--env KEY=value`
-3. exported shell env vars
+3. exported shell environment variables
 
-Repo-side parsing tracks referenced env names and reports missing values clearly.
+## Collector target selection
 
-## Collector-native validation target
+For semantic validation, Meridian prefers:
 
-For semantic validation:
-
-- use `--collector-binary` to point at a specific local Collector build
-- otherwise Meridian can use `--collector-image` through the selected engine
-
-## URI-only runtime constraints
-
-Runtime commands can work with URI-only inputs only when Meridian can materialize a local runtime config:
-
-- directly from locally materializable sources
-- or from Collector `print-config`
-
-If neither path exists, runtime preparation fails before execution.
+1. `--collector-binary`
+2. otherwise `--collector-image` through the selected engine

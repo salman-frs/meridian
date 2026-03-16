@@ -1,10 +1,8 @@
 # Artifact Contract
 
-This page documents the runtime bundle and k3s fixture contracts that Meridian currently preserves.
+## Runtime bundle contract
 
-## Runtime bundle
-
-Standard files:
+### Core files
 
 - `report.json`
 - `summary.md`
@@ -13,35 +11,39 @@ Standard files:
 - `collector.log`
 - `captures/`
 
-Conditional files:
+### Conditional files
 
-- `config.final.yaml` when Collector `print-config` succeeded
-- `collector-components.json` when component inventory was collected
-- `semantic-findings.json` when semantic findings exist
-- `graph.svg` when SVG rendering is requested and Graphviz is available
-- `diff.md` when diff data exists
+- `config.final.yaml`
+- `collector-components.json`
+- `semantic-findings.json`
+- `graph.svg`
+- `diff.md`
 - `contracts.json`
 - `contracts.md`
 - `capture.normalized.json`
 
-## Runtime provenance fields
+## Runtime metadata carried in `report.json`
 
-`report.json` records:
+`report.json` includes:
 
-- original config source
-- runtime config source
+- config path and runtime config source
 - engine and runtime backend
 - timings
-- findings, diff, graph, semantic, assertions, contracts, and captures
-- bundle paths
+- findings
+- diff results
+- graph model
+- semantic report
+- test plan
+- assertions, contracts, and captures
+- artifact manifest paths
 
 ## `latest` symlink
 
 Meridian maintains `runs/latest` as a symlink to the most recent runtime run under the selected output root.
 
-## K3s fixture artifacts
+## K3s fixture contract
 
-Per scenario, the VM runner preserves:
+Per scenario, the fixture runner preserves:
 
 - `summary.md`
 - `summary.json`

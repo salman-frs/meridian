@@ -1,22 +1,21 @@
 # Examples
 
-The repository ships example configs and fixtures under [`examples/`](https://github.com/salman-frs/meridian/tree/main/examples).
+The repository ships example configs and fixtures under `examples/`.
 
-## CLI examples
+## Collector config examples
 
-- [`examples/basic/collector.yaml`](https://github.com/salman-frs/meridian/blob/main/examples/basic/collector.yaml)
-- [`examples/routing/collector.yaml`](https://github.com/salman-frs/meridian/blob/main/examples/routing/collector.yaml)
-- [`examples/redaction/collector.yaml`](https://github.com/salman-frs/meridian/blob/main/examples/redaction/collector.yaml)
-- [`examples/multipipeline/collector.yaml`](https://github.com/salman-frs/meridian/blob/main/examples/multipipeline/collector.yaml)
+- `examples/basic/collector.yaml`
+- `examples/routing/collector.yaml`
+- `examples/redaction/collector.yaml`
+- `examples/multipipeline/collector.yaml`
 
-## Assertion example
+## Assertion and contract examples
 
-- [`examples/basic/assertions.yaml`](https://github.com/salman-frs/meridian/blob/main/examples/basic/assertions.yaml)
+- `examples/basic/assertions.yaml`
+- `examples/redaction/assertions.yaml`
 
-## Contract fixture example
+## Fixture example
 
-- [`examples/redaction/assertions.yaml`](https://github.com/salman-frs/meridian/blob/main/examples/redaction/assertions.yaml)
+- `examples/k3s-e2e/`
 
-## K3s fixture
-
-- [`examples/k3s-e2e/`](https://github.com/salman-frs/meridian/tree/main/examples/k3s-e2e)
+Use these examples as starting points for learning Meridian's command flow and output expectations.

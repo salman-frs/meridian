@@ -1,21 +1,12 @@
 # Exit Codes
 
-Meridian keeps exit semantics scriptable and simple.
-
-## Stable codes
+Meridian keeps exit behavior intentionally simple.
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Success |
-| `1` | Unclassified failure |
-| `2` | User input, validation, or contract/assertion loading failure |
-| `3` | Runtime, semantic execution, artifact, or environment failure |
+| `0` | success |
+| `1` | unclassified failure |
+| `2` | user input, validation, or assertion/contract loading failure |
+| `3` | runtime, semantic execution, artifact, or environment failure |
 
-## Guidance
-
-Treat exit codes as coarse failure classes. For exact cause, inspect:
-
-- stderr
-- `summary.md`
-- `report.json`
-- bundle artifacts such as `collector.log`
+Use exit codes as broad classes, then inspect stderr, `summary.md`, `report.json`, and the artifact bundle for exact cause.
