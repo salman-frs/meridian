@@ -43,7 +43,7 @@ Run against containerd:
 
 On macOS, `--engine containerd` uses `lima nerdctl`. Direct `nerdctl` reuse of an OrbStack Docker context is not supported.
 
-Artifacts are written under `./meridian-artifacts/runs/<run_id>/`.
+Artifacts are written under `./meridian-artifacts/runs/<run_id>/` by default. Runtime and debug commands also accept `--output` to use a different artifact root.
 
 Install a release binary:
 
@@ -61,7 +61,7 @@ tar -xzf meridian.tar.gz
 - `meridian test`
 - `meridian check`
 - `meridian ci`
-- `meridian debug logs|capture|bundle`
+- `meridian debug logs|capture|summary|bundle`
 - `meridian version`
 - `meridian completion`
 
@@ -87,6 +87,8 @@ Meridian always injects a Meridian-managed OTLP receiver for deterministic runti
 For Docker, Meridian routes capture traffic through a host alias. For Linux containerd, Meridian uses host networking via `nerdctl`. For macOS containerd, Meridian uses `lima nerdctl`, published injection ports, and `host.lima.internal` for the capture sink.
 
 Use `tee` or `live` only when you intentionally want more realistic destination behavior.
+
+Effective-config evidence depends on the Collector supporting `print-config` with the `otelcol.printInitialConfig` feature gate. When that is unavailable, Meridian reports the semantic stage explicitly and falls back to source-config evidence only.
 
 ## GitHub Action
 
@@ -126,6 +128,8 @@ Published usage:
 ```
 
 More setup details live in [docs/ci-github-actions.md](docs/ci-github-actions.md).
+
+`actions/upload-artifact@v4` is used by the shipped action and is not supported on GHES. Use a compatible artifact strategy if you need GHES support.
 
 ## Docs
 

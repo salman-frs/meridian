@@ -1,8 +1,6 @@
 package app
 
 import (
-	"fmt"
-
 	"github.com/salman-frs/meridian/internal/configio"
 	"github.com/salman-frs/meridian/internal/diffing"
 	"github.com/salman-frs/meridian/internal/model"
@@ -17,6 +15,7 @@ func newDiffCommand(global *GlobalOptions) *cobra.Command {
 		Use:   "diff",
 		Short: "Compare two collector configs and classify risky changes",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			out := newCommandOutput(cmd, global)
 			envValues, err := configio.LoadEnv(global.EnvFile, global.EnvInline, true)
 			if err != nil {
 				return err
@@ -38,10 +37,9 @@ func newDiffCommand(global *GlobalOptions) *cobra.Command {
 				return err
 			}
 			if isJSONOutput(global) {
-				return printJSON(result)
+				return out.PrintJSON(result)
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), report.RenderDiff(result))
-			return nil
+			return out.PrintHuman(report.RenderDiff(result))
 		},
 	}
 	addDiffFlags(cmd, &opts)

@@ -2,6 +2,7 @@ package report
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,27 +58,27 @@ func WriteBundle(result model.RunResult) error {
 	return nil
 }
 
-func WriteAnnotations(result model.RunResult) {
+func WriteAnnotations(w io.Writer, result model.RunResult) {
 	count := 0
 	for _, contract := range result.Contracts {
 		if contract.Status != "FAIL" || count >= 3 {
 			continue
 		}
-		fmt.Fprintf(os.Stdout, "::error title=%s::%s (%s)\n", contract.ID, contract.Message, strings.Join(contract.Diff, "; "))
+		fmt.Fprintf(w, "::error title=%s::%s (%s)\n", contract.ID, contract.Message, strings.Join(contract.Diff, "; "))
 		count++
 	}
 	for _, finding := range result.Findings {
 		if finding.Severity != model.SeverityFail || count >= 3 {
 			continue
 		}
-		fmt.Fprintf(os.Stdout, "::error title=%s::%s\n", finding.Code, finding.Message)
+		fmt.Fprintf(w, "::error title=%s::%s\n", finding.Code, finding.Message)
 		count++
 	}
 	for _, assertion := range result.Assertions {
 		if assertion.Status != "FAIL" || count >= 3 {
 			continue
 		}
-		fmt.Fprintf(os.Stdout, "::error title=%s::%s (observed %s expected %s)\n", assertion.ID, assertion.Message, assertion.Observed, assertion.Expected)
+		fmt.Fprintf(w, "::error title=%s::%s (observed %s expected %s)\n", assertion.ID, assertion.Message, assertion.Observed, assertion.Expected)
 		count++
 	}
 }

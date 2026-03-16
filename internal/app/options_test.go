@@ -8,7 +8,7 @@ import (
 func TestValidateRuntimeOptions(t *testing.T) {
 	t.Parallel()
 
-	global := &GlobalOptions{ConfigPath: "collector.yaml", Format: "human"}
+	global := &GlobalOptions{ConfigPaths: []string{"collector.yaml"}, Format: "human"}
 	base := newRuntimeOptions()
 
 	tests := []struct {
@@ -76,7 +76,7 @@ func TestValidateRuntimeOptions(t *testing.T) {
 func TestResolveRuntimeOptionsReturnsTypedValues(t *testing.T) {
 	t.Parallel()
 
-	global := &GlobalOptions{ConfigPath: "collector.yaml", Format: "json"}
+	global := &GlobalOptions{ConfigPaths: []string{"collector.yaml"}, Format: "json"}
 	opts := newRuntimeOptions()
 	opts.Engine = "docker"
 	opts.Mode = "tee"
@@ -96,7 +96,6 @@ func TestConfigSourcesPrefersRepeatedFlagValues(t *testing.T) {
 
 	global := &GlobalOptions{
 		ConfigPaths: []string{"one.yaml", "two.yaml"},
-		ConfigPath:  "ignored.yaml",
 	}
 
 	got := configSources(global)

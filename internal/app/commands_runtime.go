@@ -3,11 +3,17 @@ package app
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/salman-frs/meridian/internal/model"
 	"github.com/salman-frs/meridian/internal/report"
 	"github.com/spf13/cobra"
 )
+
+var runServiceFactory = NewRunService
+var executeRunService = func(service RunService, global *GlobalOptions, runtimeOpts *RuntimeOptions, includeDiff bool) (model.RunResult, error) {
+	return service.Execute(global, runtimeOpts, includeDiff)
+}
 
 func newTestCommand(global *GlobalOptions, runtimeOpts *RuntimeOptions) *cobra.Command {
 	cmd := &cobra.Command{
@@ -18,6 +24,7 @@ func newTestCommand(global *GlobalOptions, runtimeOpts *RuntimeOptions) *cobra.C
 		},
 	}
 	addRuntimeFlags(cmd, runtimeOpts)
+	addArtifactOutputFlag(cmd, global)
 	return cmd
 }
 
@@ -31,6 +38,7 @@ func newCheckCommand(global *GlobalOptions, runtimeOpts *RuntimeOptions) *cobra.
 	}
 	addRuntimeFlags(cmd, runtimeOpts)
 	addDiffFlags(cmd, &runtimeOpts.Diff)
+	addArtifactOutputFlag(cmd, global)
 	return cmd
 }
 
@@ -43,7 +51,9 @@ func newCICommand(global *GlobalOptions, runtimeOpts *RuntimeOptions) *cobra.Com
 		Use:   "ci",
 		Short: "CI-friendly compatibility wrapper around check",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			result, err := NewRunService().Execute(global, runtimeOpts, true)
+			out := newCommandOutput(cmd, global)
+			_ = out.PrintVerbose("starting CI compatibility workflow")
+			result, err := executeRunService(runServiceFactory(), global, runtimeOpts, true)
 			if err != nil {
 				return err
 			}
@@ -51,11 +61,18 @@ func newCICommand(global *GlobalOptions, runtimeOpts *RuntimeOptions) *cobra.Com
 			if err := writeCIOutputs(result, summary, summaryFile, jsonFile, prCommentFile); err != nil {
 				return err
 			}
-			report.WriteAnnotations(result)
-			if prMode && !global.Quiet {
+			annotationWriter := cmd.OutOrStdout()
+			if isJSONOutput(global) {
+				annotationWriter = cmd.ErrOrStderr()
+			}
+			report.WriteAnnotations(annotationWriter, result)
+			if prMode && !global.Quiet && !isJSONOutput(global) {
 				fmt.Fprintln(cmd.OutOrStdout(), report.RenderPRComment(result))
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), report.RenderTerminal(result))
+			if err := out.PrintResult(report.RenderTerminal(result), result); err != nil {
+				return err
+			}
+			_ = out.PrintVerbose(renderVerboseResultDetails(result))
 			if result.Status != "PASS" {
 				return &model.ExitError{Code: 2}
 			}
@@ -64,6 +81,7 @@ func newCICommand(global *GlobalOptions, runtimeOpts *RuntimeOptions) *cobra.Com
 	}
 	addRuntimeFlags(cmd, runtimeOpts)
 	addDiffFlags(cmd, &runtimeOpts.Diff)
+	addArtifactOutputFlag(cmd, global)
 	cmd.Flags().StringVar(&summaryFile, "summary-file", "", "write GitHub summary markdown to a file")
 	cmd.Flags().StringVar(&jsonFile, "json-file", "", "write the JSON report to a file")
 	cmd.Flags().StringVar(&prCommentFile, "pr-comment-file", "", "write the PR comment markdown to a file")
@@ -72,21 +90,21 @@ func newCICommand(global *GlobalOptions, runtimeOpts *RuntimeOptions) *cobra.Com
 }
 
 func runHarness(global *GlobalOptions, runtimeOpts *RuntimeOptions, includeDiff bool, cmd *cobra.Command) error {
-	service := NewRunService()
-	result, err := service.Execute(global, runtimeOpts, includeDiff)
+	out := newCommandOutput(cmd, global)
+	service := runServiceFactory()
+	_ = out.PrintVerbose("starting runtime harness")
+	result, err := executeRunService(service, global, runtimeOpts, includeDiff)
 	if err != nil && shouldRetryRuntimeRun(err) {
-		result, err = service.Execute(global, runtimeOpts, includeDiff)
+		_ = out.PrintVerbosef("retrying runtime harness after transient runtime failure: %v", err)
+		result, err = executeRunService(service, global, runtimeOpts, includeDiff)
 	}
 	if err != nil {
 		return err
 	}
-	if isJSONOutput(global) {
-		if err := printJSON(result); err != nil {
-			return err
-		}
-	} else {
-		fmt.Fprintln(cmd.OutOrStdout(), report.RenderTerminal(result))
+	if err := out.PrintResult(report.RenderTerminal(result), result); err != nil {
+		return err
 	}
+	_ = out.PrintVerbose(renderVerboseResultDetails(result))
 	if result.Status != "PASS" {
 		return &model.ExitError{Code: 2}
 	}
@@ -113,4 +131,15 @@ func writeCIOutputs(result model.RunResult, summary string, summaryFile string, 
 		_ = os.WriteFile(path, []byte(summary), 0o644)
 	}
 	return nil
+}
+
+func renderVerboseResultDetails(result model.RunResult) string {
+	lines := []string{}
+	if result.Semantic.Target != "" {
+		lines = append(lines, "semantic target: "+result.Semantic.Target)
+	}
+	if timingDetails := renderTimingDetails(result.Timings); timingDetails != "" {
+		lines = append(lines, timingDetails)
+	}
+	return strings.Join(lines, "\n")
 }

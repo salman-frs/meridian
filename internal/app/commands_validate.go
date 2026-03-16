@@ -2,7 +2,6 @@ package app
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/salman-frs/meridian/internal/collector"
 	"github.com/salman-frs/meridian/internal/configio"
@@ -19,7 +18,7 @@ func newValidateCommand(global *GlobalOptions) *cobra.Command {
 		Use:   "validate",
 		Short: "Run static validation against a collector config",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = rules
+			out := newCommandOutput(cmd, global)
 
 			sources, err := configio.ExpandConfigSources(configio.LoadOptions{
 				ConfigPaths: configSources(global),
@@ -73,9 +72,10 @@ func newValidateCommand(global *GlobalOptions) *cobra.Command {
 				return &model.ExitError{Code: 3, Err: err}
 			}
 			findings = append(findings, semantic.Findings...)
+			_ = out.PrintVerbosef("semantic target: %s (%s)", semantic.Target, semantic.Source)
 
 			if isJSONOutput(global) {
-				return printJSON(map[string]any{
+				return out.PrintJSON(map[string]any{
 					"config_sources": sources,
 					"local_load":     localStage,
 					"semantic":       semantic,
@@ -84,7 +84,9 @@ func newValidateCommand(global *GlobalOptions) *cobra.Command {
 				})
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), renderValidationReport(findings, localStage, semantic))
+			if err := out.PrintHuman(renderValidationReport(findings, localStage, semantic)); err != nil {
+				return err
+			}
 			if localStage.Status == "SKIP" && !semantic.Enabled {
 				return &model.ExitError{Code: 2, Err: errors.New("validate had no local config to parse and semantic validation was skipped")}
 			}
@@ -96,6 +98,8 @@ func newValidateCommand(global *GlobalOptions) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&failOn, "fail-on", "fail", "treat warn or fail findings as command failures")
 	cmd.Flags().StringVar(&rules, "rules", "default", "validation profile: default|minimal|all")
+	_ = cmd.Flags().MarkHidden("rules")
+	_ = cmd.Flags().MarkDeprecated("rules", "validation profiles are not implemented; the default rule set is always used")
 	addSemanticFlags(cmd, semanticOpts)
 	return cmd
 }

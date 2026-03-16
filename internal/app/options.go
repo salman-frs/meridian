@@ -40,7 +40,6 @@ const (
 
 type GlobalOptions struct {
 	ConfigPaths     []string
-	ConfigPath      string
 	ConfigDir       string
 	EnvFile         string
 	EnvInline       []string
@@ -141,6 +140,10 @@ func addRuntimeFlags(cmd *cobra.Command, opts *RuntimeOptions) {
 	cmd.Flags().BoolVar(&opts.ChangedOnly, "changed-only", false, "require explicit diff inputs and include only diff-aware review hints")
 	cmd.Flags().StringVar(&opts.RenderGraph, "render-graph", "mermaid", "additional graph artifact for runtime commands: mermaid|svg|none")
 	cmd.Flags().IntVar(&opts.CaptureSamples, "capture-samples", 5, "maximum captured telemetry samples to persist per signal")
+}
+
+func addArtifactOutputFlag(cmd *cobra.Command, global *GlobalOptions) {
+	cmd.Flags().StringVar(&global.Output, "output", defaultOutputDir, "artifact output directory")
 }
 
 func addDiffFlags(cmd *cobra.Command, opts *DiffOptions) {
@@ -289,9 +292,6 @@ func parseGraphOutputRender(value string) (graphOutputRender, error) {
 func configSources(global *GlobalOptions) []string {
 	if len(global.ConfigPaths) > 0 {
 		return append([]string{}, global.ConfigPaths...)
-	}
-	if global.ConfigPath != "" {
-		return []string{global.ConfigPath}
 	}
 	return nil
 }

@@ -28,6 +28,9 @@ func NewRootCommand() *cobra.Command {
 	root.PersistentFlags().BoolVar(&opts.Quiet, "quiet", false, "suppress human progress output")
 	root.PersistentFlags().BoolVar(&opts.Verbose, "verbose", false, "enable verbose output")
 	root.PersistentFlags().BoolVar(&opts.NoColor, "no-color", false, "disable colorized output")
+	_ = root.PersistentFlags().MarkHidden("output")
+	_ = root.PersistentFlags().MarkHidden("no-color")
+	_ = root.PersistentFlags().MarkDeprecated("no-color", "colorized output is not implemented yet")
 
 	root.AddCommand(newValidateCommand(opts))
 	root.AddCommand(newGraphCommand(opts))
@@ -35,7 +38,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newTestCommand(opts, runtimeOpts))
 	root.AddCommand(newCheckCommand(opts, runtimeOpts))
 	root.AddCommand(newCICommand(opts, runtimeOpts))
-	root.AddCommand(newDebugCommand())
+	root.AddCommand(newDebugCommand(opts))
 	root.AddCommand(newVersionCommand())
 	root.AddCommand(newCompletionCommand(root))
 	return root

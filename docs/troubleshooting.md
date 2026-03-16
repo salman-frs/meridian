@@ -13,6 +13,14 @@ Meridian runtime commands need a supported container engine. If `meridian check`
 
 On macOS, `--engine containerd` uses Lima rather than trying to talk to an OrbStack Docker socket directly.
 
+## Effective config unavailable
+
+If semantic validation reports that `print-config` was skipped or unavailable, Meridian could not collect effective-config evidence from the selected Collector build.
+
+- confirm the Collector supports `print-config`
+- confirm it accepts the `otelcol.printInitialConfig` feature gate
+- expect diff and runtime provenance to fall back to source-config evidence when effective config is unavailable
+
 ## Missing env vars
 
 Validation failures for missing env vars include the variable name and a remediation hint. Provide the value with:
@@ -35,4 +43,11 @@ For deeper debugging:
 
 ```bash
 meridian test -c collector.yaml --keep-containers --verbose
+```
+
+For stored artifacts:
+
+```bash
+meridian debug summary --output ./meridian-artifacts
+meridian debug bundle --format json --output ./meridian-artifacts
 ```

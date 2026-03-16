@@ -1,0 +1,29 @@
+Review and runtime-test OpenTelemetry Collector configs
+
+Usage:
+  meridian [command]
+
+Available Commands:
+  check       Run Meridian's opinionated end-to-end confidence workflow
+  ci          CI-friendly compatibility wrapper around check
+  completion  Generate shell completion scripts
+  debug       Inspect artifacts from a previous Meridian run
+  diff        Compare two collector configs and classify risky changes
+  graph       Build a pipeline graph for the collector config
+  help        Help about any command
+  test        Run the runtime harness against the collector config
+  validate    Run static validation against a collector config
+  version     Print the Meridian version
+
+Flags:
+      --collector-binary string   path to a collector binary used for semantic validation
+  -c, --config stringArray        collector config source; repeatable and may be a file path or collector config URI
+      --config-dir string         path to a rendered collector config directory
+      --env stringArray           inline KEY=VALUE env vars
+      --env-file string           dotenv file used for config interpolation
+      --format string             output format: human|json (default "human")
+  -h, --help                      help for meridian
+      --quiet                     suppress human progress output
+      --verbose                   enable verbose output
+
+Use "meridian [command] --help" for more information about a command.

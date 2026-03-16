@@ -27,6 +27,8 @@ type Options struct {
 	RequireSemantic bool
 }
 
+const printConfigFeatureGate = "otelcol.printInitialConfig"
+
 type executionTarget struct {
 	source         string
 	target         string
@@ -106,9 +108,9 @@ func Analyze(opts Options) (model.SemanticReport, error) {
 		report.Findings = append(report.Findings, model.Finding{
 			Severity:    model.SeverityInfo,
 			Code:        "collector-print-config-skipped",
-			Message:     "selected collector does not support print-config; semantic diff falls back to source config",
+			Message:     fmt.Sprintf("selected collector does not support print-config with feature gate %q; effective-config evidence was unavailable", printConfigFeatureGate),
 			Remediation: "use a collector build with print-config support if you want effective-config evidence",
-			NextStep:    "rerun with a collector distribution that supports print-config",
+			NextStep:    "rerun with a collector distribution that supports print-config and the required feature gate",
 		})
 	default:
 		report.Stages = append(report.Stages, model.SemanticStage{Name: "print-config", Status: "FAIL", Message: trimOutput(err.Error())})
@@ -217,10 +219,7 @@ func binaryTarget(path string, env map[string]string) executionTarget {
 			return runCommand(commandWithEnv(exec.Command(path, args...), env))
 		},
 		runWithSources: func(subcommand string, sources []string) ([]byte, error) {
-			args := []string{subcommand}
-			for _, source := range sources {
-				args = append(args, "--config", source)
-			}
+			args := collectorCommandArgs(subcommand, sources)
 			return runCommand(commandWithEnv(exec.Command(path, args...), env))
 		},
 	}
@@ -254,14 +253,23 @@ func imageTarget(engine runtime.ResolvedEngine, image string, sources []string, 
 			runArgs := append([]string{"run", "--rm"}, networkArgs...)
 			runArgs = append(runArgs, mountArgs...)
 			runArgs = append(runArgs, envArgs...)
-			runArgs = append(runArgs, image, subcommand)
-			for _, source := range mappedSources {
-				runArgs = append(runArgs, "--config", source)
-			}
+			runArgs = append(runArgs, image)
+			runArgs = append(runArgs, collectorCommandArgs(subcommand, mappedSources)...)
 			cmd := engine.Command(runArgs...)
 			return runCommand(cmd)
 		},
 	}, nil
+}
+
+func collectorCommandArgs(subcommand string, sources []string) []string {
+	args := []string{subcommand}
+	if subcommand == "print-config" {
+		args = []string{"--feature-gates=" + printConfigFeatureGate, subcommand}
+	}
+	for _, source := range sources {
+		args = append(args, "--config", source)
+	}
+	return args
 }
 
 func mapConfigSourcesForContainer(sources []string) ([]string, []string, error) {
@@ -601,7 +609,7 @@ func isUnsupportedCommand(err error) bool {
 		return false
 	}
 	text := strings.ToLower(err.Error())
-	return strings.Contains(text, "unknown command") || strings.Contains(text, "unknown shorthand flag") || strings.Contains(text, "not a meridian") || strings.Contains(text, "no help topic")
+	return strings.Contains(text, "unknown command") || strings.Contains(text, "unknown shorthand flag") || strings.Contains(text, "unknown flag") || strings.Contains(text, "not a meridian") || strings.Contains(text, "no help topic")
 }
 
 func trimOutput(text string) string {

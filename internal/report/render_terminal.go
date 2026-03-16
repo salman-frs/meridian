@@ -89,6 +89,20 @@ func RenderTerminal(result model.RunResult) string {
 	return strings.Join(lines, "\n")
 }
 
+func RenderBundleSummary(result model.RunResult) string {
+	lines := []string{
+		"Bundle manifest:",
+		fmt.Sprintf("- Run ID: %s", valueOrDefault(result.RunID, "unknown")),
+		fmt.Sprintf("- Status: %s", valueOrDefault(result.Status, "unknown")),
+		fmt.Sprintf("- Config: %s", valueOrDefault(result.ConfigPath, "unknown")),
+		fmt.Sprintf("- Summary: %s", result.Artifacts.SummaryMD),
+		fmt.Sprintf("- Report: %s", result.Artifacts.ReportJSON),
+	}
+	lines = append(lines, "Artifacts:")
+	lines = append(lines, artifactPaths(result)...)
+	return strings.Join(lines, "\n")
+}
+
 func artifactPaths(result model.RunResult) []string {
 	paths := []string{
 		"- " + result.Artifacts.ReportJSON,

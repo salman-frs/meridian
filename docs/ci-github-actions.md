@@ -36,3 +36,8 @@ For local development inside this repository, use `uses: ./action`.
 - updates one PR comment with the `<!-- meridian-comment -->` marker when enabled
 
 Use `engine: containerd` only on Linux runners with `nerdctl` available. `engine: auto` keeps Docker as the preferred runtime when both engines are present, including macOS hosts that also have Lima installed.
+
+## Notes
+
+- The action uses `actions/upload-artifact@v4`, which is not supported on GHES.
+- `meridian ci --format json` now keeps stdout machine-readable; annotations are emitted separately so JSON parsers do not have to strip workflow commands first.

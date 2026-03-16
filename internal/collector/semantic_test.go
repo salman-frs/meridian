@@ -97,6 +97,72 @@ func TestMaterializeConfigParsesRenderedOutput(t *testing.T) {
 	}
 }
 
+func TestResolveFinalConfigEnablesPrintConfigFeatureGate(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "collector.yaml")
+	if err := os.WriteFile(configPath, []byte("service: {}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+	logPath := filepath.Join(dir, "print-config.log")
+	binaryPath := writeFakeCollector(t, dir)
+
+	finalConfig, ok, err := ResolveFinalConfig(Options{
+		ConfigSources:   []string{configPath},
+		ConfigModel:     model.ConfigModel{SourcePaths: []string{configPath}},
+		Env:             map[string]string{"MERIDIAN_PRINT_CONFIG_LOG": logPath, "MERIDIAN_TEST_ENV": "from-env"},
+		CollectorBinary: binaryPath,
+	})
+	if err != nil {
+		t.Fatalf("ResolveFinalConfig() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ResolveFinalConfig() ok = false, want true")
+	}
+	if !strings.Contains(finalConfig, "service:") {
+		t.Fatalf("ResolveFinalConfig() final config = %q, want rendered config", finalConfig)
+	}
+	loggedArgs, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(logPath) error = %v", err)
+	}
+	if !strings.Contains(string(loggedArgs), "--feature-gates="+printConfigFeatureGate+" print-config --config") {
+		t.Fatalf("print-config args = %q, want feature gate", string(loggedArgs))
+	}
+}
+
+func TestAnalyzeSkipsPrintConfigWhenFeatureGateUnsupported(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "collector.yaml")
+	if err := os.WriteFile(configPath, []byte("service: {}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+	binaryPath := writeFakeCollectorWithoutPrintConfigSupport(t, dir)
+
+	report, err := Analyze(Options{
+		ConfigSources:   []string{configPath},
+		ConfigModel:     model.ConfigModel{SourcePaths: []string{configPath}},
+		CollectorBinary: binaryPath,
+		RequireSemantic: true,
+	})
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	stage := report.Stages[len(report.Stages)-1]
+	if stage.Name != "print-config" || stage.Status != "SKIP" {
+		t.Fatalf("print-config stage = %#v, want SKIP", stage)
+	}
+	if got := report.Findings[len(report.Findings)-1].Code; got != "collector-print-config-skipped" {
+		t.Fatalf("last finding code = %q, want collector-print-config-skipped", got)
+	}
+	if report.FinalConfig != "" {
+		t.Fatalf("Analyze() final config = %q, want empty when unsupported", report.FinalConfig)
+	}
+}
+
 func TestSemanticContainerRunArgs(t *testing.T) {
 	t.Parallel()
 
@@ -167,7 +233,15 @@ func writeFakeCollector(t *testing.T, dir string) string {
 	path := filepath.Join(dir, "fake-otelcol.sh")
 	script := `#!/bin/sh
 set -eu
+PRINT_CONFIG_LOG="${MERIDIAN_PRINT_CONFIG_LOG:-}"
 cmd="${1:-}"
+if [ -n "$PRINT_CONFIG_LOG" ]; then
+  printf '%s\n' "$*" >> "$PRINT_CONFIG_LOG"
+fi
+while [ "${cmd#--feature-gates=}" != "$cmd" ]; do
+  shift || true
+  cmd="${1:-}"
+done
 shift || true
 case "$cmd" in
   components)
@@ -204,6 +278,36 @@ esac
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("WriteFile(fake collector) error = %v", err)
+	}
+	return path
+}
+
+func writeFakeCollectorWithoutPrintConfigSupport(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "fake-otelcol-no-print-config.sh")
+	script := `#!/bin/sh
+set -eu
+cmd="${1:-}"
+if [ "${cmd#--feature-gates=}" != "$cmd" ]; then
+  echo "unknown flag: ${cmd%%=*}" >&2
+  exit 1
+fi
+shift || true
+case "$cmd" in
+  components)
+    echo "Receivers:"
+    ;;
+  validate)
+    echo "validation passed"
+    ;;
+  *)
+    echo "unknown command: $cmd" >&2
+    exit 1
+    ;;
+esac
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile(fake collector no print-config) error = %v", err)
 	}
 	return path
 }

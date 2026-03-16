@@ -3,15 +3,57 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/salman-frs/meridian/internal/model"
+	"github.com/spf13/cobra"
 )
 
-func printJSON(v any) error {
-	enc := json.NewEncoder(os.Stdout)
+type commandOutput struct {
+	cmd    *cobra.Command
+	global *GlobalOptions
+}
+
+func newCommandOutput(cmd *cobra.Command, global *GlobalOptions) commandOutput {
+	return commandOutput{cmd: cmd, global: global}
+}
+
+func (o commandOutput) PrintHuman(text string) error {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	_, err := fmt.Fprintln(o.cmd.OutOrStdout(), text)
+	return err
+}
+
+func (o commandOutput) PrintJSON(v any) error {
+	return writeJSON(o.cmd.OutOrStdout(), v)
+}
+
+func (o commandOutput) PrintResult(human string, payload any) error {
+	if isJSONOutput(o.global) {
+		return o.PrintJSON(payload)
+	}
+	return o.PrintHuman(human)
+}
+
+func (o commandOutput) PrintVerbose(text string) error {
+	if !o.global.Verbose || o.global.Quiet || isJSONOutput(o.global) || strings.TrimSpace(text) == "" {
+		return nil
+	}
+	_, err := fmt.Fprintf(o.cmd.ErrOrStderr(), "VERBOSE: %s\n", text)
+	return err
+}
+
+func (o commandOutput) PrintVerbosef(format string, args ...any) error {
+	return o.PrintVerbose(fmt.Sprintf(format, args...))
+}
+
+func writeJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }
@@ -65,23 +107,23 @@ func shouldFail(findings []model.Finding, failOn string) bool {
 	return false
 }
 
-func resolveRunPath(runDir string, child string) string {
+func resolveRunPath(outputDir string, runDir string, child string) string {
 	if runDir == "" {
-		return filepath.Join(defaultOutputDir, "latest", child)
+		return filepath.Join(outputDir, "runs", "latest", child)
 	}
 	return filepath.Join(runDir, child)
 }
 
-func printFile(path string) error {
+func printFile(w io.Writer, path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	fmt.Print(string(data))
+	_, err = fmt.Fprint(w, string(data))
 	return nil
 }
 
-func printCaptureDir(path string) error {
+func printCaptureDir(w io.Writer, path string) error {
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return err
@@ -94,9 +136,25 @@ func printCaptureDir(path string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("== %s ==\n%s\n", entry.Name(), string(data))
+		if _, err := fmt.Fprintf(w, "== %s ==\n%s\n", entry.Name(), string(data)); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func renderTimingDetails(timings map[string]string) string {
+	if len(timings) == 0 {
+		return ""
+	}
+	order := []string{"config_load", "semantic", "validate", "graph", "patch", "diff", "runtime", "total"}
+	lines := []string{"timings:"}
+	for _, key := range order {
+		if value := strings.TrimSpace(timings[key]); value != "" {
+			lines = append(lines, fmt.Sprintf("- %s: %s", key, value))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func stageMessage(message string) string {

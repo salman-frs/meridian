@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/salman-frs/meridian/internal/graph"
 	"github.com/salman-frs/meridian/internal/model"
@@ -17,6 +18,7 @@ func newGraphCommand(global *GlobalOptions) *cobra.Command {
 		Use:   "graph",
 		Short: "Build a pipeline graph for the collector config",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			out := newCommandOutput(cmd, global)
 			cfg, err := loadConfig(global)
 			if err != nil {
 				return err
@@ -26,11 +28,18 @@ func newGraphCommand(global *GlobalOptions) *cobra.Command {
 				return &model.ExitError{Code: 2, Err: err}
 			}
 			g := graph.Build(cfg)
-			if view != "" {
-				fmt.Fprintln(cmd.OutOrStdout(), graph.RenderTable(cfg))
+			graphView, err := parseGraphView(view)
+			if err != nil {
+				return &model.ExitError{Code: 2, Err: err}
+			}
+			if strings.TrimSpace(view) == "ascii" && !isJSONOutput(global) {
+				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Flag --view=ascii is deprecated; use --view table.")
 			}
 			if isJSONOutput(global) {
-				return printJSON(g)
+				return out.PrintJSON(g)
+			}
+			if graphView != "" {
+				return writeGraphOutput(outPath, graph.RenderTable(cfg), cmd)
 			}
 			switch renderFormat {
 			case graphOutputRenderNone:
@@ -54,8 +63,19 @@ func newGraphCommand(global *GlobalOptions) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&renderMode, "render", "mermaid", "render mode: mermaid|dot|svg|none")
 	cmd.Flags().StringVar(&outPath, "out", "", "write graph output to a file")
-	cmd.Flags().StringVar(&view, "view", "table", "terminal view: ascii|table")
+	cmd.Flags().StringVar(&view, "view", "", "terminal view: table")
 	return cmd
+}
+
+func parseGraphView(value string) (string, error) {
+	switch strings.TrimSpace(value) {
+	case "", "table":
+		return strings.TrimSpace(value), nil
+	case "ascii":
+		return "table", nil
+	default:
+		return "", fmt.Errorf("unsupported --view %q", value)
+	}
 }
 
 func writeGraphOutput(outPath string, rendered string, cmd *cobra.Command) error {

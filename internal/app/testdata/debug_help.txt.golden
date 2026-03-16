@@ -1,0 +1,26 @@
+Inspect artifacts from a previous Meridian run
+
+Usage:
+  meridian debug [command]
+
+Available Commands:
+  bundle      Print the run bundle manifest
+  capture     Print capture samples from a run directory
+  logs        Print collector logs from a run directory
+  summary     Print the stored markdown summary
+
+Flags:
+  -h, --help            help for debug
+      --output string   artifact output directory (default "./meridian-artifacts")
+
+Global Flags:
+      --collector-binary string   path to a collector binary used for semantic validation
+  -c, --config stringArray        collector config source; repeatable and may be a file path or collector config URI
+      --config-dir string         path to a rendered collector config directory
+      --env stringArray           inline KEY=VALUE env vars
+      --env-file string           dotenv file used for config interpolation
+      --format string             output format: human|json (default "human")
+      --quiet                     suppress human progress output
+      --verbose                   enable verbose output
+
+Use "meridian debug [command] --help" for more information about a command.
