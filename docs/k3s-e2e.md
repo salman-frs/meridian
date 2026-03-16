@@ -17,6 +17,12 @@ The stack sends traces and metrics to the existing `observability/otel-gateway` 
 scripts/e2e_k3s_vm.sh happy
 ```
 
+To run the full regression matrix on the VM:
+
+```bash
+scripts/e2e_k3s_vm.sh all
+```
+
 Artifacts are written to:
 
 ```bash
@@ -33,6 +39,8 @@ Important files:
 - `loki-storefront.json`
 - `tempo-storefront.json`
 
+The summary artifacts are the authoritative acceptance record for the fixture. On this VM, pod logs plus Prometheus and gateway-counter evidence are the primary gates. Tempo and Loki artifacts are still collected when available, but they are not the blocking success signal for every negative scenario because the backend queries are not fully run-scoped.
+
 ## Scenarios
 
 - `happy`
@@ -41,7 +49,7 @@ Important files:
 - `auth-fail`
 - `backend-unreachable`
 
-`backend-unreachable` is expected to exit non-zero after it captures exporter failures and missing backend evidence.
+Each scenario exits `0` when its expected behavior is observed, including negative scenarios. A fault-injection scenario is considered a successful test when the expected failure mode is detected correctly.
 
 ## Images
 

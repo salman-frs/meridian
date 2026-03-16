@@ -13,10 +13,12 @@ import (
 	"syscall"
 	"time"
 
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+type serviceCaller func(ctx context.Context, url string, token string, runID string) error
 
 func Run(ctx context.Context) error {
 	cfg, err := LoadConfig()
@@ -45,62 +47,8 @@ func runStorefront(ctx context.Context, cfg Config) error {
 	}
 	defer telemetry.shutdown(context.Background())
 
-	client := &http.Client{
-		Timeout:   5 * time.Second,
-		Transport: telemetry.client(),
-	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
-	mux.Handle("/browse", otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx, span := telemetry.tracer.Start(r.Context(), "storefront.browse")
-		defer span.End()
-
-		telemetry.requests.Add(ctx, 1, commonMetricOption(cfg,
-			attribute.String("route", "/browse"),
-			attribute.String("method", r.Method),
-		))
-		logEvent(cfg, "info", "browse_request", map[string]any{"path": r.URL.Path, "method": r.Method})
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("browse ok"))
-	}), "browse"))
-
-	mux.Handle("/checkout", otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx, span := telemetry.tracer.Start(r.Context(), "storefront.checkout")
-		defer span.End()
-
-		telemetry.requests.Add(ctx, 1, commonMetricOption(cfg,
-			attribute.String("route", "/checkout"),
-			attribute.String("method", r.Method),
-		))
-
-		runID := headerOrDefault(r, "X-Meridian-Run-ID", cfg.RunID)
-		if err := callService(ctx, client, cfg.InventoryURL+"/reserve", cfg.OutboundToken, runID); err != nil {
-			status := http.StatusBadGateway
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			logEvent(cfg, "error", "checkout_dependency_error", map[string]any{"dependency": "inventory", "error": err.Error()})
-			http.Error(w, err.Error(), status)
-			return
-		}
-		if err := callService(ctx, client, cfg.CheckoutURL+"/checkout", cfg.OutboundToken, runID); err != nil {
-			status := http.StatusBadGateway
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			logEvent(cfg, "error", "checkout_dependency_error", map[string]any{"dependency": "checkout", "error": err.Error()})
-			http.Error(w, err.Error(), status)
-			return
-		}
-
-		logEvent(cfg, "info", "checkout_request", map[string]any{"path": r.URL.Path, "method": r.Method})
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("checkout ok"))
-	}), "checkout"))
-
-	return serveHTTP(ctx, cfg, mux)
+	client := newServiceClient(telemetry)
+	return serveHTTP(ctx, cfg, newStorefrontHandler(cfg, telemetry, makeServiceCaller(client)))
 }
 
 func runCheckout(ctx context.Context, cfg Config) error {
@@ -110,12 +58,61 @@ func runCheckout(ctx context.Context, cfg Config) error {
 	}
 	defer telemetry.shutdown(context.Background())
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+	return serveHTTP(ctx, cfg, newCheckoutHandler(cfg, telemetry))
+}
+
+func runInventory(ctx context.Context, cfg Config) error {
+	telemetry, err := newTelemetry(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer telemetry.shutdown(context.Background())
+
+	go heartbeatLoop(ctx, cfg, telemetry)
+	return serveHTTP(ctx, cfg, newInventoryHandler(cfg, telemetry))
+}
+
+func newStorefrontHandler(cfg Config, telemetry *telemetry, call serviceCaller) http.Handler {
+	mux := newHealthMux()
+	mux.HandleFunc("/browse", func(w http.ResponseWriter, r *http.Request) {
+		ctx, span := telemetry.tracer.Start(r.Context(), "storefront.browse")
+		defer span.End()
+
+		telemetry.requests.Add(ctx, 1, commonMetricOption(cfg,
+			attribute.String("route", "/browse"),
+			attribute.String("method", r.Method),
+		))
+		logEvent(cfg, "info", "browse_request", map[string]any{"path": r.URL.Path, "method": r.Method})
+		writeOK(w, "browse ok")
 	})
-	mux.Handle("/checkout", otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/checkout", func(w http.ResponseWriter, r *http.Request) {
+		ctx, span := telemetry.tracer.Start(r.Context(), "storefront.checkout")
+		defer span.End()
+
+		telemetry.requests.Add(ctx, 1, commonMetricOption(cfg,
+			attribute.String("route", "/checkout"),
+			attribute.String("method", r.Method),
+		))
+
+		runID := headerOrDefault(r, "X-Meridian-Run-ID", cfg.RunID)
+		if err := call(ctx, cfg.InventoryURL+"/reserve", cfg.OutboundToken, runID); err != nil {
+			handleDependencyError(cfg, span, w, "inventory", err)
+			return
+		}
+		if err := call(ctx, cfg.CheckoutURL+"/checkout", cfg.OutboundToken, runID); err != nil {
+			handleDependencyError(cfg, span, w, "checkout", err)
+			return
+		}
+
+		logEvent(cfg, "info", "checkout_request", map[string]any{"path": r.URL.Path, "method": r.Method})
+		writeOK(w, "checkout ok")
+	})
+	return mux
+}
+
+func newCheckoutHandler(cfg Config, telemetry *telemetry) http.Handler {
+	mux := newHealthMux()
+	mux.HandleFunc("/checkout", func(w http.ResponseWriter, r *http.Request) {
 		ctx, span := telemetry.tracer.Start(r.Context(), "checkout.process")
 		defer span.End()
 
@@ -132,28 +129,14 @@ func runCheckout(ctx context.Context, cfg Config) error {
 			attribute.String("method", r.Method),
 		))
 		logEvent(cfg, "info", "checkout_processed", map[string]any{"path": r.URL.Path})
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("processed"))
-	}), "checkout"))
-
-	return serveHTTP(ctx, cfg, mux)
+		writeOK(w, "processed")
+	})
+	return mux
 }
 
-func runInventory(ctx context.Context, cfg Config) error {
-	telemetry, err := newTelemetry(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	defer telemetry.shutdown(context.Background())
-
-	go heartbeatLoop(ctx, cfg, telemetry)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
-	mux.Handle("/reserve", otelhttp.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func newInventoryHandler(cfg Config, telemetry *telemetry) http.Handler {
+	mux := newHealthMux()
+	mux.HandleFunc("/reserve", func(w http.ResponseWriter, r *http.Request) {
 		_, span := telemetry.tracer.Start(r.Context(), "inventory.reserve")
 		defer span.End()
 
@@ -165,11 +148,42 @@ func runInventory(ctx context.Context, cfg Config) error {
 		}
 
 		logEvent(cfg, "info", "inventory_reserved", map[string]any{"path": r.URL.Path})
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("reserved"))
-	}), "reserve"))
+		writeOK(w, "reserved")
+	})
+	return mux
+}
 
-	return serveHTTP(ctx, cfg, mux)
+func newHealthMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		writeOK(w, "ok")
+	})
+	return mux
+}
+
+func newServiceClient(telemetry *telemetry) *http.Client {
+	return &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: telemetry.client(),
+	}
+}
+
+func makeServiceCaller(client *http.Client) serviceCaller {
+	return func(ctx context.Context, url string, token string, runID string) error {
+		return callService(ctx, client, url, token, runID)
+	}
+}
+
+func handleDependencyError(cfg Config, span trace.Span, w http.ResponseWriter, dependency string, err error) {
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
+	logEvent(cfg, "error", "checkout_dependency_error", map[string]any{"dependency": dependency, "error": err.Error()})
+	http.Error(w, err.Error(), http.StatusBadGateway)
+}
+
+func writeOK(w http.ResponseWriter, body string) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(body))
 }
 
 func runTrafficgen(ctx context.Context, cfg Config) error {

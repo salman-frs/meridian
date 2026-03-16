@@ -1,0 +1,32 @@
+## Meridian: FAIL ❌
+
+**Config:** `collector.yaml`  
+**Engine:** `docker`  
+**Runtime backend:** `docker`  
+**Mode:** `safe`  
+**Collector image:** `otel/test:latest`  
+**Run:** `1970-01-01T00:00:00Z`
+
+### Summary
+- Validate: PASS
+- Graph: PASS
+- traces: FAIL (received 0)
+
+### What changed (risk highlights)
+- **FAIL:** pipeline wiring changed
+
+### Top failure
+- **traces-received**: received at least one item
+- Likely cause: pipeline wiring
+- Next step: open collector.log
+
+### Artifacts
+Download the `meridian-artifacts` workflow artifact for the full bundle.
+- `report.json`
+- `summary.md`
+- `graph.mmd`
+- `collector.log`
+- `config.patched.yaml`
+- `graph.svg`
+- `diff.md`
+- `captures/`

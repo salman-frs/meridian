@@ -5,49 +5,23 @@ set -euo pipefail
 SCENARIO="${1:-happy}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 EXAMPLE_DIR="$ROOT_DIR/examples/k3s-e2e"
-RUN_ID="${MERIDIAN_RUN_ID:-meridian-${SCENARIO}-$(date -u +%Y%m%d-%H%M%S)}"
-ARTIFACT_DIR="${MERIDIAN_E2E_ARTIFACT_DIR:-/tmp/meridian-e2e-custom/$RUN_ID}"
-TMP_DIR="$ARTIFACT_DIR/rendered"
+BASE_RUN_ID="${MERIDIAN_RUN_ID:-meridian-${SCENARIO}-$(date -u +%Y%m%d-%H%M%S)}"
 NAMESPACE="${MERIDIAN_E2E_NAMESPACE:-meridian-e2e}"
 USER_ID="$(id -u)"
+ROOTLESS_BIN_DIR="${MERIDIAN_ROOTLESS_BIN_DIR:-${HOME}/.local/nerdctl-full/bin}"
 NERDCTL_BIN="${MERIDIAN_NERDCTL_BIN:-${HOME}/bin/nerdctl}"
 KUBECTL_BIN="${MERIDIAN_KUBECTL_BIN:-kubectl}"
-K3S_IMPORT_CMD="${MERIDIAN_K3S_IMPORT_CMD:-sudo k3s ctr images import}"
+K3S_IMPORT_CMD="${MERIDIAN_K3S_IMPORT_CMD:-k3s ctr images import}"
 ROOTLESS_SETUP_BIN="${MERIDIAN_ROOTLESS_SETUP_BIN:-${HOME}/.local/nerdctl-full/bin/containerd-rootless-setuptool.sh}"
 BUILDKIT_HOST="${MERIDIAN_BUILDKIT_HOST:-unix:///run/user/${USER_ID}/buildkit/buildkitd.sock}"
-
-mkdir -p "$ARTIFACT_DIR"
-rm -rf "$TMP_DIR"
-mkdir -p "$TMP_DIR"
-
-if [[ ! -d "$EXAMPLE_DIR/overlays/$SCENARIO" ]]; then
-  echo "unknown scenario: $SCENARIO" >&2
-  exit 2
-fi
-
-if ! command -v "$KUBECTL_BIN" >/dev/null 2>&1; then
-  echo "kubectl not found: $KUBECTL_BIN" >&2
-  exit 3
-fi
-
-if [[ ! -x "$NERDCTL_BIN" ]]; then
-  if command -v nerdctl >/dev/null 2>&1; then
-    NERDCTL_BIN="$(command -v nerdctl)"
-  else
-    echo "nerdctl not found; set MERIDIAN_NERDCTL_BIN" >&2
-    exit 3
-  fi
-fi
-
-TAG="$RUN_ID"
-STORE_IMAGE="meridian-k3s-e2e-storefront:$TAG"
-CHECKOUT_IMAGE="meridian-k3s-e2e-checkout:$TAG"
-INVENTORY_IMAGE="meridian-k3s-e2e-inventory:$TAG"
-TRAFFIC_IMAGE="meridian-k3s-e2e-trafficgen:$TAG"
+SUDO_PASSWORD="${MERIDIAN_SUDO_PASSWORD:-}"
+SCENARIO_MATRIX=(happy drop-traces misroute-logs auth-fail backend-unreachable)
 
 copy_overlay() {
-  cp -R "$EXAMPLE_DIR/." "$TMP_DIR/"
-  python3 - "$TMP_DIR" "$TAG" <<'PY'
+  local destination="$1"
+  local tag="$2"
+  cp -R "$EXAMPLE_DIR/." "$destination/"
+  python3 - "$destination" "$tag" <<'PY'
 import pathlib
 import sys
 
@@ -59,12 +33,46 @@ for path in root.rglob("*.yaml"):
 PY
 }
 
-build_image() {
-  local image="$1"
-  "$NERDCTL_BIN" build \
-    -f "$EXAMPLE_DIR/Dockerfile" \
-    -t "$image" \
-    "$ROOT_DIR"
+run_sudo() {
+  if sudo -n true >/dev/null 2>&1; then
+    sudo "$@"
+    return
+  fi
+  if [[ -n "$SUDO_PASSWORD" ]]; then
+    printf '%s\n' "$SUDO_PASSWORD" | sudo -S "$@"
+    return
+  fi
+  sudo "$@"
+}
+
+preflight() {
+  if [[ -d "$ROOTLESS_BIN_DIR" ]]; then
+    export PATH="$ROOTLESS_BIN_DIR:$PATH"
+  fi
+
+  if [[ ! -d "$EXAMPLE_DIR/overlays/happy" ]]; then
+    echo "missing examples/k3s-e2e overlays" >&2
+    exit 2
+  fi
+
+  if ! command -v "$KUBECTL_BIN" >/dev/null 2>&1; then
+    echo "kubectl not found: $KUBECTL_BIN" >&2
+    exit 3
+  fi
+
+  if [[ ! -x "$NERDCTL_BIN" ]]; then
+    if command -v nerdctl >/dev/null 2>&1; then
+      NERDCTL_BIN="$(command -v nerdctl)"
+    else
+      echo "nerdctl not found; set MERIDIAN_NERDCTL_BIN" >&2
+      exit 3
+    fi
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 not found" >&2
+    exit 3
+  fi
 }
 
 ensure_buildkit() {
@@ -83,17 +91,21 @@ ensure_buildkit() {
     return 0
   fi
 
-  {
-    echo "BuildKit is not available for nerdctl. Install it with containerd-rootless-setuptool.sh install-buildkit-containerd or set MERIDIAN_ROOTLESS_SETUP_BIN." >&2
-    exit 3
-  }
+  echo "BuildKit is not available for nerdctl. Install it with containerd-rootless-setuptool.sh install-buildkit-containerd or set MERIDIAN_ROOTLESS_SETUP_BIN." >&2
+  exit 3
+}
+
+build_image() {
+  local image="$1"
+  "$NERDCTL_BIN" build -f "$EXAMPLE_DIR/Dockerfile" -t "$image" "$ROOT_DIR"
 }
 
 import_image() {
   local image="$1"
-  local archive="$ARTIFACT_DIR/$(echo "$image" | tr ':/' '__').tar"
+  local artifact_dir="$2"
+  local archive="$artifact_dir/$(echo "$image" | tr ':/' '__').tar"
   "$NERDCTL_BIN" save -o "$archive" "$image"
-  bash -lc "$K3S_IMPORT_CMD '$archive'"
+  run_sudo bash -lc "$K3S_IMPORT_CMD '$archive'"
 }
 
 svc_ip() {
@@ -116,7 +128,7 @@ retry() {
       return 1
     fi
     sleep "$sleep_seconds"
-    ((try+=1))
+    ((try += 1))
   done
 }
 
@@ -134,7 +146,7 @@ query_loki() {
   local end_ns start_ns
   end_ns="$(date +%s%N)"
   start_ns="$(( end_ns - 900000000000 ))"
-  timeout 25s curl -sfG --max-time 20 "http://$ip/loki/api/v1/query_range" \
+  timeout 10s curl -sfG --max-time 8 "http://$ip/loki/api/v1/query_range" \
     --data-urlencode "query={k8s_namespace_name=\"${namespace}\",service_name=\"${service_name}\"} |= \"\\\"run_id\\\":\\\"${run_id}\\\"\"" \
     --data-urlencode "start=$start_ns" \
     --data-urlencode "end=$end_ns" \
@@ -145,7 +157,7 @@ query_loki() {
 query_tempo() {
   local ip="$1"
   local service_name="$2"
-  timeout 25s curl -sfG --max-time 20 "http://$ip:3200/api/search" \
+  timeout 12s curl -sfG --max-time 10 "http://$ip:3200/api/search" \
     --data-urlencode 'limit=20' \
     --data-urlencode "q={resource.service.name=\"$service_name\"}"
 }
@@ -157,33 +169,43 @@ wait_for_deployments() {
 }
 
 collect_logs() {
-  mkdir -p "$ARTIFACT_DIR/logs"
+  local artifact_dir="$1"
+  mkdir -p "$artifact_dir/logs"
   for item in storefront checkout inventory trafficgen; do
-    "$KUBECTL_BIN" logs -n "$NAMESPACE" $( [[ "$item" == "trafficgen" ]] && echo "job/$item" || echo "deployment/$item" ) >"$ARTIFACT_DIR/logs/$item.log" 2>&1 || true
+    "$KUBECTL_BIN" logs -n "$NAMESPACE" $( [[ "$item" == "trafficgen" ]] && echo "job/$item" || echo "deployment/$item" ) >"$artifact_dir/logs/$item.log" 2>&1 || true
   done
-  "$KUBECTL_BIN" get all -n "$NAMESPACE" >"$ARTIFACT_DIR/kubectl-get-all.txt" 2>&1 || true
-  "$KUBECTL_BIN" get events -n "$NAMESPACE" --sort-by=.lastTimestamp >"$ARTIFACT_DIR/events.txt" 2>&1 || true
+  "$KUBECTL_BIN" get all -n "$NAMESPACE" >"$artifact_dir/kubectl-get-all.txt" 2>&1 || true
+  "$KUBECTL_BIN" get events -n "$NAMESPACE" --sort-by=.lastTimestamp >"$artifact_dir/events.txt" 2>&1 || true
 }
 
 cleanup_namespace() {
   "$KUBECTL_BIN" delete namespace "$NAMESPACE" --ignore-not-found=true --wait=true --timeout=180s >/dev/null 2>&1 || true
 }
 
-copy_overlay
-cleanup_namespace
-ensure_buildkit
+prepare_images() {
+  local tag="$1"
+  local artifact_dir="$2"
+  local store_image="meridian-k3s-e2e-storefront:$tag"
+  local checkout_image="meridian-k3s-e2e-checkout:$tag"
+  local inventory_image="meridian-k3s-e2e-inventory:$tag"
+  local traffic_image="meridian-k3s-e2e-trafficgen:$tag"
 
-build_image "$STORE_IMAGE"
-build_image "$CHECKOUT_IMAGE"
-build_image "$INVENTORY_IMAGE"
-build_image "$TRAFFIC_IMAGE"
+  mkdir -p "$artifact_dir"
+  ensure_buildkit
+  build_image "$store_image"
+  build_image "$checkout_image"
+  build_image "$inventory_image"
+  build_image "$traffic_image"
 
-import_image "$STORE_IMAGE"
-import_image "$CHECKOUT_IMAGE"
-import_image "$INVENTORY_IMAGE"
-import_image "$TRAFFIC_IMAGE"
+  import_image "$store_image" "$artifact_dir"
+  import_image "$checkout_image" "$artifact_dir"
+  import_image "$inventory_image" "$artifact_dir"
+  import_image "$traffic_image" "$artifact_dir"
+}
 
-"$KUBECTL_BIN" apply -f - <<EOF
+create_run_namespace() {
+  local run_id="$1"
+  "$KUBECTL_BIN" apply -f - <<EOF
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -195,180 +217,128 @@ metadata:
   name: meridian-e2e-run
   namespace: $NAMESPACE
 data:
-  MERIDIAN_RUN_ID: $RUN_ID
+  MERIDIAN_RUN_ID: $run_id
 EOF
-
-GATEWAY_IP="$(svc_ip otel-gateway)"
-LOKI_IP="$(svc_ip loki)"
-PROM_IP="$(svc_ip prometheus-server)"
-TEMPO_IP="$(svc_ip tempo)"
-
-SPAN_BEFORE="$(query_gateway_counter otelcol_exporter_sent_spans_total "$GATEWAY_IP" || echo 0)"
-LOG_BEFORE="$(query_gateway_counter otelcol_exporter_sent_log_records_total "$GATEWAY_IP" || echo 0)"
-METRIC_BEFORE="$(query_gateway_counter otelcol_exporter_sent_metric_points_total "$GATEWAY_IP" || echo 0)"
-
-"$KUBECTL_BIN" apply -k "$TMP_DIR/overlays/$SCENARIO"
-
-wait_for_deployments
-retry 12 5 "$KUBECTL_BIN" get endpoints storefront -n "$NAMESPACE" -o jsonpath='{.subsets[0].addresses[0].ip}' >/dev/null
-"$KUBECTL_BIN" delete job trafficgen -n "$NAMESPACE" --ignore-not-found=true --wait=true >/dev/null 2>&1 || true
-if ! "$KUBECTL_BIN" create -n "$NAMESPACE" -f "$TMP_DIR/base/trafficgen-job.yaml"; then
-  "$KUBECTL_BIN" replace --force -n "$NAMESPACE" -f "$TMP_DIR/base/trafficgen-job.yaml"
-fi
-retry 12 2 "$KUBECTL_BIN" get job trafficgen -n "$NAMESPACE" >/dev/null
-"$KUBECTL_BIN" wait --for=condition=complete job/trafficgen -n "$NAMESPACE" --timeout=180s
-sleep 20
-
-SPAN_AFTER="$(query_gateway_counter otelcol_exporter_sent_spans_total "$GATEWAY_IP" || echo 0)"
-LOG_AFTER="$(query_gateway_counter otelcol_exporter_sent_log_records_total "$GATEWAY_IP" || echo 0)"
-METRIC_AFTER="$(query_gateway_counter otelcol_exporter_sent_metric_points_total "$GATEWAY_IP" || echo 0)"
-
-retry 6 5 query_prometheus "meridian_http_requests_total{run_id=\"$RUN_ID\"}" "$PROM_IP" >"$ARTIFACT_DIR/prom-http-requests.json"
-retry 6 5 query_prometheus "meridian_checkout_total{run_id=\"$RUN_ID\"}" "$PROM_IP" >"$ARTIFACT_DIR/prom-checkout.json" || true
-retry 6 5 query_prometheus "meridian_inventory_heartbeat_total{run_id=\"$RUN_ID\"}" "$PROM_IP" >"$ARTIFACT_DIR/prom-heartbeat.json"
-retry 18 5 query_loki "$NAMESPACE" storefront "$RUN_ID" "$LOKI_IP" >"$ARTIFACT_DIR/loki-storefront.json" || true
-retry 6 5 query_tempo "$TEMPO_IP" storefront >"$ARTIFACT_DIR/tempo-storefront.json" || true
-
-collect_logs
-
-python3 - "$ARTIFACT_DIR" "$SCENARIO" "$RUN_ID" "$SPAN_BEFORE" "$SPAN_AFTER" "$LOG_BEFORE" "$LOG_AFTER" "$METRIC_BEFORE" "$METRIC_AFTER" <<'PY'
-import json
-import pathlib
-import sys
-
-artifact_dir = pathlib.Path(sys.argv[1])
-scenario = sys.argv[2]
-run_id = sys.argv[3]
-span_before, span_after = map(float, sys.argv[4:6])
-log_before, log_after = map(float, sys.argv[6:8])
-metric_before, metric_after = map(float, sys.argv[8:10])
-
-def load(path):
-    file_path = artifact_dir / path
-    if not file_path.exists():
-        return None
-    text = file_path.read_text().strip()
-    if not text:
-        return None
-    return json.loads(text)
-
-prom_http = load("prom-http-requests.json")
-prom_checkout = load("prom-checkout.json")
-prom_heartbeat = load("prom-heartbeat.json")
-loki = load("loki-storefront.json")
-tempo = load("tempo-storefront.json")
-
-def has_prom_result(payload):
-    if not payload:
-        return False
-    return bool(payload.get("data", {}).get("result"))
-
-def has_loki_result(payload):
-    if not payload:
-        return False
-    return bool(payload.get("data", {}).get("result"))
-
-tempo_blob = json.dumps(tempo or {})
-tempo_hit = "traceID" in tempo_blob or '"traces"' in tempo_blob or '"service.name"' in tempo_blob
-
-logs_text = ""
-for name in ("storefront.log", "checkout.log", "inventory.log", "trafficgen.log"):
-    path = artifact_dir / "logs" / name
-    if path.exists():
-        logs_text += path.read_text()
-
-summary = {
-    "run_id": run_id,
-    "scenario": scenario,
-    "gateway_deltas": {
-        "spans": span_after - span_before,
-        "logs": log_after - log_before,
-        "metrics": metric_after - metric_before,
-    },
-    "prometheus": {
-        "http_requests": has_prom_result(prom_http),
-        "checkout": has_prom_result(prom_checkout),
-        "heartbeat": has_prom_result(prom_heartbeat),
-    },
-    "loki": {
-        "storefront_run_logs": has_loki_result(loki),
-    },
-    "tempo": {
-        "storefront": tempo_hit,
-    },
 }
 
-failures = []
+collect_backend_evidence() {
+  local artifact_dir="$1"
+  local run_id="$2"
+  local loki_ip="$3"
+  local prom_ip="$4"
+  local tempo_ip="$5"
 
-if scenario == "happy":
-    if summary["gateway_deltas"]["spans"] <= 0:
-        failures.append("expected spans delta > 0")
-    if summary["gateway_deltas"]["logs"] <= 0:
-        failures.append("expected logs delta > 0")
-    if summary["gateway_deltas"]["metrics"] <= 0:
-        failures.append("expected metrics delta > 0")
-    if not summary["prometheus"]["http_requests"]:
-        failures.append("expected Prometheus meridian_http_requests_total result")
-    if not summary["prometheus"]["heartbeat"]:
-        failures.append("expected Prometheus meridian_inventory_heartbeat_total result")
-    if not summary["loki"]["storefront_run_logs"]:
-        failures.append("expected Loki run logs")
-    if not summary["tempo"]["storefront"]:
-        failures.append("expected Tempo storefront traces")
-elif scenario == "drop-traces":
-    if summary["prometheus"]["http_requests"] is False:
-        failures.append("expected Prometheus http_requests result")
-    if summary["loki"]["storefront_run_logs"] is False:
-        failures.append("expected Loki run logs")
-    if summary["tempo"]["storefront"]:
-        failures.append("expected Tempo storefront traces to be absent")
-elif scenario == "misroute-logs":
-    if not summary["prometheus"]["http_requests"]:
-        failures.append("expected Prometheus http_requests result")
-    if not summary["tempo"]["storefront"]:
-        failures.append("expected Tempo storefront traces")
-    if summary["loki"]["storefront_run_logs"]:
-        failures.append("expected Loki run logs to be absent")
-elif scenario == "auth-fail":
-    if "auth_error" not in logs_text:
-        failures.append("expected auth_error in pod logs")
-    if not summary["prometheus"]["http_requests"]:
-        failures.append("expected storefront Prometheus traffic result")
-elif scenario == "backend-unreachable":
-    if "otel_error" not in logs_text:
-        failures.append("expected otel_error in pod logs")
-    if summary["prometheus"]["http_requests"]:
-        failures.append("expected Prometheus http_requests result to be absent")
-else:
-    failures.append(f"unsupported scenario validation: {scenario}")
+  retry 6 5 query_prometheus "meridian_http_requests_total{run_id=\"$run_id\"}" "$prom_ip" >"$artifact_dir/prom-http-requests.json" || true
+  retry 6 5 query_prometheus "meridian_checkout_total{run_id=\"$run_id\"}" "$prom_ip" >"$artifact_dir/prom-checkout.json" || true
+  retry 6 5 query_prometheus "meridian_inventory_heartbeat_total{run_id=\"$run_id\"}" "$prom_ip" >"$artifact_dir/prom-heartbeat.json" || true
+  retry 2 2 query_loki "$NAMESPACE" storefront "$run_id" "$loki_ip" >"$artifact_dir/loki-storefront.json" || true
+  retry 3 3 query_tempo "$tempo_ip" storefront >"$artifact_dir/tempo-storefront.json" || true
+}
 
-summary["failures"] = failures
-(artifact_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+evaluate_scenario() {
+  local artifact_dir="$1"
+  local scenario="$2"
+  local run_id="$3"
+  local span_before="$4"
+  local span_after="$5"
+  local log_before="$6"
+  local log_after="$7"
+  local metric_before="$8"
+  local metric_after="$9"
 
-lines = [
-    f"# Meridian K3s E2E Summary",
-    "",
-    f"- run_id: `{run_id}`",
-    f"- scenario: `{scenario}`",
-    f"- spans delta: `{summary['gateway_deltas']['spans']}`",
-    f"- logs delta: `{summary['gateway_deltas']['logs']}`",
-    f"- metrics delta: `{summary['gateway_deltas']['metrics']}`",
-    f"- prometheus http_requests: `{summary['prometheus']['http_requests']}`",
-    f"- prometheus heartbeat: `{summary['prometheus']['heartbeat']}`",
-    f"- loki storefront logs: `{summary['loki']['storefront_run_logs']}`",
-    f"- tempo storefront traces: `{summary['tempo']['storefront']}`",
-]
-if failures:
-    lines.extend(["", "## Failures"])
-    lines.extend([f"- {item}" for item in failures])
-else:
-    lines.extend(["", "## Result", "- PASS"])
-(artifact_dir / "summary.md").write_text("\n".join(lines) + "\n")
+  python3 "$ROOT_DIR/scripts/e2e_k3s_summary.py" \
+    "$artifact_dir" "$scenario" "$run_id" \
+    "$span_before" "$span_after" \
+    "$log_before" "$log_after" \
+    "$metric_before" "$metric_after"
+}
 
-if scenario == "backend-unreachable" and failures:
-    sys.exit(1)
-if failures:
-    sys.exit(2)
-PY
+run_single_scenario() {
+  local scenario="$1"
+  local tag="$2"
+  local artifact_dir="$3"
+  local rendered_dir="$artifact_dir/rendered"
+  local run_id="${tag}-${scenario}"
 
-cat "$ARTIFACT_DIR/summary.md"
+  mkdir -p "$artifact_dir"
+  rm -rf "$rendered_dir"
+  mkdir -p "$rendered_dir"
+
+  if [[ ! -d "$EXAMPLE_DIR/overlays/$scenario" ]]; then
+    echo "unknown scenario: $scenario" >&2
+    return 2
+  fi
+
+  copy_overlay "$rendered_dir" "$tag"
+  cleanup_namespace
+  create_run_namespace "$run_id"
+
+  local gateway_ip loki_ip prom_ip tempo_ip
+  gateway_ip="$(svc_ip otel-gateway)"
+  loki_ip="$(svc_ip loki)"
+  prom_ip="$(svc_ip prometheus-server)"
+  tempo_ip="$(svc_ip tempo)"
+
+  local span_before log_before metric_before
+  span_before="$(query_gateway_counter otelcol_exporter_sent_spans_total "$gateway_ip" || echo 0)"
+  log_before="$(query_gateway_counter otelcol_exporter_sent_log_records_total "$gateway_ip" || echo 0)"
+  metric_before="$(query_gateway_counter otelcol_exporter_sent_metric_points_total "$gateway_ip" || echo 0)"
+
+  "$KUBECTL_BIN" apply -k "$rendered_dir/overlays/$scenario"
+  wait_for_deployments
+  retry 12 5 "$KUBECTL_BIN" get endpoints storefront -n "$NAMESPACE" -o jsonpath='{.subsets[0].addresses[0].ip}' >/dev/null
+  "$KUBECTL_BIN" delete job trafficgen -n "$NAMESPACE" --ignore-not-found=true --wait=true >/dev/null 2>&1 || true
+  if ! "$KUBECTL_BIN" create -n "$NAMESPACE" -f "$rendered_dir/base/trafficgen-job.yaml"; then
+    "$KUBECTL_BIN" replace --force -n "$NAMESPACE" -f "$rendered_dir/base/trafficgen-job.yaml"
+  fi
+  retry 12 2 "$KUBECTL_BIN" get job trafficgen -n "$NAMESPACE" >/dev/null
+  "$KUBECTL_BIN" wait --for=condition=complete job/trafficgen -n "$NAMESPACE" --timeout=180s
+  sleep 20
+
+  local span_after log_after metric_after
+  span_after="$(query_gateway_counter otelcol_exporter_sent_spans_total "$gateway_ip" || echo 0)"
+  log_after="$(query_gateway_counter otelcol_exporter_sent_log_records_total "$gateway_ip" || echo 0)"
+  metric_after="$(query_gateway_counter otelcol_exporter_sent_metric_points_total "$gateway_ip" || echo 0)"
+
+  collect_backend_evidence "$artifact_dir" "$run_id" "$loki_ip" "$prom_ip" "$tempo_ip"
+  collect_logs "$artifact_dir"
+
+  evaluate_scenario "$artifact_dir" "$scenario" "$run_id" \
+    "$span_before" "$span_after" \
+    "$log_before" "$log_after" \
+    "$metric_before" "$metric_after"
+  cat "$artifact_dir/summary.md"
+}
+
+run_matrix() {
+  local matrix_dir="$1"
+  local tag="$2"
+  local failed=0
+
+  mkdir -p "$matrix_dir"
+  for scenario in "${SCENARIO_MATRIX[@]}"; do
+    echo "=== Running scenario: $scenario ==="
+    if ! run_single_scenario "$scenario" "$tag" "$matrix_dir/$scenario"; then
+      failed=1
+    fi
+  done
+  return "$failed"
+}
+
+main() {
+  preflight
+
+  local artifact_root
+  if [[ "$SCENARIO" == "all" ]]; then
+    artifact_root="${MERIDIAN_E2E_ARTIFACT_DIR:-/tmp/meridian-e2e-custom/$BASE_RUN_ID}"
+    prepare_images "$BASE_RUN_ID" "$artifact_root"
+    run_matrix "$artifact_root" "$BASE_RUN_ID"
+    return
+  fi
+
+  artifact_root="${MERIDIAN_E2E_ARTIFACT_DIR:-/tmp/meridian-e2e-custom/$BASE_RUN_ID}"
+  prepare_images "$BASE_RUN_ID" "$artifact_root"
+  run_single_scenario "$SCENARIO" "$BASE_RUN_ID" "$artifact_root"
+}
+
+main "$@"

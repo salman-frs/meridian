@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 
 type Options struct {
 	Engine         model.RuntimeEngine
+	ResolvedEngine ResolvedEngine
 	CollectorImage string
 	Timeout        time.Duration
 	StartupTimeout time.Duration
@@ -53,13 +53,9 @@ type RunResult struct {
 }
 
 func NewRunner(options Options) *Runner {
-	adapter, err := ResolveEngine(options.Engine)
-	if err != nil {
-		return &Runner{
-			options: options,
-			now:     time.Now,
-			sleep:   time.Sleep,
-		}
+	adapter := options.ResolvedEngine.adapterOrNil()
+	if adapter == nil {
+		adapter, _ = resolveEngine(options.Engine)
 	}
 	return &Runner{
 		options: options,
@@ -124,7 +120,7 @@ func (r *Runner) ensureAdapter() error {
 	if r.adapter != nil {
 		return nil
 	}
-	adapter, err := ResolveEngine(r.options.Engine)
+	adapter, err := resolveEngine(r.options.Engine)
 	if err != nil {
 		return &model.ExitError{Code: 3, Err: err}
 	}
@@ -147,13 +143,6 @@ func (r *Runner) persistCollectorLogs(path string, logs []byte) error {
 	return os.WriteFile(path, logs, 0o644)
 }
 
-func (r *Runner) cleanupContainer(containerID string) {
-	if r.options.KeepContainers || containerID == "" {
-		return
-	}
-	_, _ = r.commandOutput("rm", "-f", containerID)
-}
-
 func (r *Runner) injectTelemetry(plan model.TestPlan, seed int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), r.options.InjectTimeout)
 	defer cancel()
@@ -173,108 +162,11 @@ func (r *Runner) loadCustomAssertions(path string, runID string) ([]model.Assert
 	return customAssertions, nil
 }
 
-func (r *Runner) startCollector(req RunRequest) (string, []byte, error) {
-	var lastErr error
-	var lastLogs []byte
-	for attempt := 0; attempt < 2; attempt++ {
-		containerID, logs, ready, exitedEarly, err := r.startCollectorAttempt(req)
-		if err == nil && ready {
-			return containerID, logs, nil
-		}
-		r.cleanupContainer(containerID)
-		if err != nil {
-			lastErr = err
-			lastLogs = logs
-		}
-		if !exitedEarly {
-			break
-		}
-	}
-	if lastErr != nil {
-		return "", lastLogs, lastErr
-	}
-	return "", lastLogs, &model.ExitError{Code: 3, Err: errors.New("collector did not become ready before startup timeout")}
-}
-
-func (r *Runner) startCollectorAttempt(req RunRequest) (string, []byte, bool, bool, error) {
-	runArgs := r.adapter.RunArgs(req)
-	output, err := r.commandOutput(runArgs...)
-	if err != nil {
-		return "", output, false, false, &model.ExitError{Code: 3, Err: fmt.Errorf("failed to start collector container with %s via %s: %s", r.adapter.Engine(), r.adapter.CommandLabel(), trimOutput(output))}
-	}
-	containerID := strings.TrimSpace(string(output))
-	deadline := r.now().Add(r.options.StartupTimeout)
-	for r.now().Before(deadline) {
-		logs := r.collectorLogs(containerID)
-		text := string(logs)
-		if collectorReady(text) {
-			return containerID, logs, true, false, nil
-		}
-		if !r.containerRunning(containerID) {
-			return containerID, logs, false, true, &model.ExitError{Code: 3, Err: fmt.Errorf("collector exited before it became ready: %s", strings.TrimSpace(text))}
-		}
-		r.sleep(500 * time.Millisecond)
-	}
-	if !r.containerRunning(containerID) {
-		logs := r.collectorLogs(containerID)
-		return containerID, logs, false, true, &model.ExitError{Code: 3, Err: fmt.Errorf("collector exited before startup timeout: %s", strings.TrimSpace(string(logs)))}
-	}
-	logs := r.collectorLogs(containerID)
-	return containerID, logs, true, false, nil
-}
-
 func firstPath(paths []string) string {
 	if len(paths) == 0 {
 		return ""
 	}
 	return paths[0]
-}
-
-func (r *Runner) waitForCapture(snapshot func() []model.SignalCapture, signals []model.SignalType) []model.SignalCapture {
-	deadline := r.now().Add(r.options.CaptureTimeout)
-	for {
-		captures := snapshot()
-		if allSignalsCaptured(captures, signals) || r.now().After(deadline) {
-			return captures
-		}
-		r.sleep(200 * time.Millisecond)
-	}
-}
-
-func allSignalsCaptured(captures []model.SignalCapture, signals []model.SignalType) bool {
-	for _, signal := range signals {
-		capture := model.SignalCapture{Signal: signal}
-		for _, item := range captures {
-			if item.Signal == signal {
-				capture = item
-				break
-			}
-		}
-		if capture.Count < 1 {
-			return false
-		}
-	}
-	return true
-}
-
-func (r *Runner) containerRunning(containerID string) bool {
-	output, err := r.commandOutput("inspect", "-f", "{{.State.Running}}", containerID)
-	if err != nil {
-		return false
-	}
-	return parseRunningState(output)
-}
-
-func (r *Runner) collectorLogs(containerID string) []byte {
-	output, _ := r.commandOutput("logs", containerID)
-	return output
-}
-
-func (r *Runner) commandOutput(args ...string) ([]byte, error) {
-	if r.runCmd != nil {
-		return r.runCmd(args...)
-	}
-	return r.adapter.Command(args...).CombinedOutput()
 }
 
 func collectorReady(logs string) bool {
@@ -283,55 +175,10 @@ func collectorReady(logs string) bool {
 		strings.Contains(logs, "Serving")
 }
 
-func reproCommand(req RunRequest) string {
-	parts := []string{
-		"meridian", "test",
-		"-c", firstPath(req.Original.SourcePaths),
-		"--engine=" + string(req.Plan.Engine),
-		"--mode=" + string(req.Plan.Mode),
-		"--collector-image", req.Plan.CollectorImage,
-		"--timeout", req.Plan.Timeout,
-		"--startup-timeout", req.Plan.StartupTimeout,
-		"--inject-timeout", req.Plan.InjectTimeout,
-		"--capture-timeout", req.Plan.CaptureTimeout,
-		"--keep-containers",
-	}
-	if req.Assertions != "" {
-		parts = append(parts, "--assertions", req.Assertions)
-	}
-	keys := make([]string, 0, len(req.Env))
-	for key := range req.Env {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	for _, key := range keys {
-		parts = append(parts, "--env", key+"=<redacted>")
-	}
-	return strings.Join(parts, " ")
-}
-
-func sanitizeName(value string) string {
-	replacer := strings.NewReplacer(":", "-", "/", "-", " ", "-", "@", "-", "=", "-", "+", "-", "%", "-")
-	return replacer.Replace(value)
-}
-
 func trimOutput(output []byte) string {
 	text := strings.TrimSpace(string(output))
 	if text == "" {
 		return errors.New("no command output").Error()
 	}
 	return text
-}
-
-func parseRunningState(output []byte) bool {
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		switch strings.TrimSpace(lines[i]) {
-		case "true":
-			return true
-		case "false":
-			return false
-		}
-	}
-	return false
 }

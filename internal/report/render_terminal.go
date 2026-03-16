@@ -1,0 +1,75 @@
+package report
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/salman-frs/meridian/internal/model"
+)
+
+func RenderTerminal(result model.RunResult) string {
+	lines := []string{
+		fmt.Sprintf("RESULT: %s", result.Status),
+		fmt.Sprintf("Run ID: %s", result.RunID),
+		fmt.Sprintf("Config: %s", result.ConfigPath),
+		fmt.Sprintf("Engine: %s", result.Engine),
+		fmt.Sprintf("Runtime backend: %s", valueOrDefault(result.RuntimeBackend, "n/a")),
+		fmt.Sprintf("Mode: %s", result.Mode),
+		fmt.Sprintf("Collector image: %s", result.CollectorImage),
+		fmt.Sprintf("Artifacts: %s", result.Artifacts.RunDir),
+	}
+	if result.Message != "" {
+		lines = append(lines, "", "What happened:", "- "+result.Message)
+	}
+	if len(result.Diff.Changes) > 0 {
+		lines = append(lines, "", "What changed (risk highlights):")
+		for _, change := range result.Diff.Changes {
+			lines = append(lines, fmt.Sprintf("- [%s] %s", strings.ToUpper(string(change.Severity)), change.Message))
+		}
+	}
+	if len(result.Findings) > 0 {
+		lines = append(lines, "", "Validation:")
+		for _, finding := range result.Findings {
+			lines = append(lines, "- "+model.FormatFinding(finding))
+		}
+	}
+	if len(result.Assertions) > 0 {
+		lines = append(lines, "", "Runtime assertions:")
+		for _, assertion := range result.Assertions {
+			lines = append(lines, fmt.Sprintf("- %s: %s (%s observed %s expected %s)", assertion.ID, assertion.Status, assertion.Message, assertion.Observed, assertion.Expected))
+			if assertion.Status == "FAIL" {
+				lines = append(lines, "", "Likely causes:")
+				for _, cause := range assertion.LikelyCauses {
+					lines = append(lines, "- "+cause)
+				}
+				lines = append(lines, "", "Next steps:")
+				for _, step := range assertion.NextSteps {
+					lines = append(lines, "- "+step)
+				}
+				break
+			}
+		}
+	}
+	lines = append(lines, "", "Artifacts:")
+	lines = append(lines, artifactPaths(result)...)
+	return strings.Join(lines, "\n")
+}
+
+func artifactPaths(result model.RunResult) []string {
+	paths := []string{
+		"- " + result.Artifacts.ReportJSON,
+		"- " + result.Artifacts.SummaryMD,
+		"- " + result.Artifacts.GraphMMD,
+	}
+	if result.Artifacts.GraphSVG != "" {
+		paths = append(paths, "- "+result.Artifacts.GraphSVG)
+	}
+	paths = append(paths,
+		"- "+result.Artifacts.CollectorLog,
+		"- "+result.Artifacts.PatchedConfig,
+	)
+	if len(result.Diff.Changes) > 0 {
+		paths = append(paths, "- "+result.Artifacts.DiffMD)
+	}
+	return paths
+}

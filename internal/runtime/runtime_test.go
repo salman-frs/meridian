@@ -157,6 +157,22 @@ func TestCollectorReady(t *testing.T) {
 	}
 }
 
+func TestNewRunnerUsesResolvedEngine(t *testing.T) {
+	t.Parallel()
+
+	runner := NewRunner(Options{
+		Engine:         model.RuntimeEngineAuto,
+		ResolvedEngine: ResolvedEngine{adapter: fakeEngineAdapter{}},
+	})
+
+	if runner.adapter == nil {
+		t.Fatal("NewRunner() adapter = nil, want resolved adapter")
+	}
+	if runner.adapter.Engine() != model.RuntimeEngineDocker {
+		t.Fatalf("NewRunner() adapter.Engine() = %q", runner.adapter.Engine())
+	}
+}
+
 type fakeEngineAdapter struct{}
 
 func (fakeEngineAdapter) Engine() model.RuntimeEngine                            { return model.RuntimeEngineDocker }

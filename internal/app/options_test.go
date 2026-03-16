@@ -72,3 +72,21 @@ func TestValidateRuntimeOptions(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveRuntimeOptionsReturnsTypedValues(t *testing.T) {
+	t.Parallel()
+
+	global := &GlobalOptions{ConfigPath: "collector.yaml", Format: "json"}
+	opts := newRuntimeOptions()
+	opts.Engine = "docker"
+	opts.Mode = "tee"
+	opts.RenderGraph = "svg"
+
+	resolved, err := resolveRuntimeOptions(global, opts)
+	if err != nil {
+		t.Fatalf("resolveRuntimeOptions() error = %v", err)
+	}
+	if resolved.Engine != "docker" || resolved.Mode != "tee" || resolved.RenderGraph != graphRenderSVG {
+		t.Fatalf("resolveRuntimeOptions() = %#v", resolved)
+	}
+}

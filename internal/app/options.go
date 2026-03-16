@@ -14,6 +14,30 @@ const (
 	defaultOutputDir      = "./meridian-artifacts"
 )
 
+type OutputFormat string
+
+const (
+	outputFormatHuman OutputFormat = "human"
+	outputFormatJSON  OutputFormat = "json"
+)
+
+type GraphRenderMode string
+
+const (
+	graphRenderNone    GraphRenderMode = "none"
+	graphRenderMermaid GraphRenderMode = "mermaid"
+	graphRenderSVG     GraphRenderMode = "svg"
+)
+
+type graphOutputRender string
+
+const (
+	graphOutputRenderMermaid graphOutputRender = "mermaid"
+	graphOutputRenderDOT     graphOutputRender = "dot"
+	graphOutputRenderSVG     graphOutputRender = "svg"
+	graphOutputRenderNone    graphOutputRender = "none"
+)
+
 type GlobalOptions struct {
 	ConfigPath string
 	ConfigDir  string
@@ -50,6 +74,24 @@ type DiffOptions struct {
 	BaseRef   string
 	HeadRef   string
 	Threshold string
+}
+
+type ResolvedRuntimeOptions struct {
+	Engine         model.RuntimeEngine
+	Mode           model.RuntimeMode
+	CollectorImage string
+	Timeout        time.Duration
+	StartupTimeout time.Duration
+	InjectTimeout  time.Duration
+	CaptureTimeout time.Duration
+	Pipelines      []string
+	AssertionsFile string
+	KeepContainers bool
+	Seed           int64
+	ChangedOnly    bool
+	RenderGraph    GraphRenderMode
+	CaptureSamples int
+	Diff           DiffOptions
 }
 
 func newRuntimeOptions() *RuntimeOptions {
@@ -102,43 +144,59 @@ func validateGlobalOptions(global *GlobalOptions) error {
 	if global.ConfigPath != "" && global.ConfigDir != "" {
 		return errors.New("use either --config or --config-dir, not both")
 	}
-	switch global.Format {
-	case "human", "json":
-		return nil
-	default:
-		return fmt.Errorf("unsupported --format %q", global.Format)
-	}
+	_, err := parseOutputFormat(global.Format)
+	return err
 }
 
 func validateRuntimeOptions(global *GlobalOptions, runtimeOpts *RuntimeOptions) error {
+	_, err := resolveRuntimeOptions(global, runtimeOpts)
+	return err
+}
+
+func resolveRuntimeOptions(global *GlobalOptions, runtimeOpts *RuntimeOptions) (ResolvedRuntimeOptions, error) {
 	if err := validateGlobalOptions(global); err != nil {
-		return err
-	}
-	switch runtimeOpts.Mode {
-	case string(model.RuntimeModeSafe), string(model.RuntimeModeTee), string(model.RuntimeModeLive):
-	default:
-		return fmt.Errorf("unsupported --mode %q", runtimeOpts.Mode)
-	}
-	switch runtimeOpts.Engine {
-	case string(model.RuntimeEngineAuto), string(model.RuntimeEngineDocker), string(model.RuntimeEngineContainerd):
-	default:
-		return fmt.Errorf("unsupported --engine %q", runtimeOpts.Engine)
-	}
-	switch runtimeOpts.RenderGraph {
-	case "none", "mermaid", "svg":
-	default:
-		return fmt.Errorf("unsupported --render-graph %q", runtimeOpts.RenderGraph)
+		return ResolvedRuntimeOptions{}, err
 	}
 	if runtimeOpts.Timeout <= 0 || runtimeOpts.StartupTimeout <= 0 || runtimeOpts.InjectTimeout <= 0 || runtimeOpts.CaptureTimeout <= 0 {
-		return errors.New("runtime timeouts must all be greater than zero")
+		return ResolvedRuntimeOptions{}, errors.New("runtime timeouts must all be greater than zero")
 	}
 	if runtimeOpts.CaptureSamples <= 0 {
-		return errors.New("--capture-samples must be greater than zero")
+		return ResolvedRuntimeOptions{}, errors.New("--capture-samples must be greater than zero")
 	}
 	if runtimeOpts.ChangedOnly && !hasDiffInputs(runtimeOpts) {
-		return errors.New("--changed-only requires explicit diff inputs")
+		return ResolvedRuntimeOptions{}, errors.New("--changed-only requires explicit diff inputs")
 	}
-	return nil
+
+	engine, err := parseRuntimeEngine(runtimeOpts.Engine)
+	if err != nil {
+		return ResolvedRuntimeOptions{}, err
+	}
+	mode, err := parseRuntimeMode(runtimeOpts.Mode)
+	if err != nil {
+		return ResolvedRuntimeOptions{}, err
+	}
+	renderGraph, err := parseGraphRenderMode(runtimeOpts.RenderGraph)
+	if err != nil {
+		return ResolvedRuntimeOptions{}, err
+	}
+
+	return ResolvedRuntimeOptions{
+		Engine:         engine,
+		Mode:           mode,
+		CollectorImage: runtimeOpts.CollectorImage,
+		Timeout:        runtimeOpts.Timeout,
+		StartupTimeout: runtimeOpts.StartupTimeout,
+		InjectTimeout:  runtimeOpts.InjectTimeout,
+		CaptureTimeout: runtimeOpts.CaptureTimeout,
+		Pipelines:      runtimeOpts.Pipelines,
+		AssertionsFile: runtimeOpts.AssertionsFile,
+		KeepContainers: runtimeOpts.KeepContainers,
+		Seed:           runtimeOpts.Seed,
+		ChangedOnly:    runtimeOpts.ChangedOnly,
+		RenderGraph:    renderGraph,
+		CaptureSamples: runtimeOpts.CaptureSamples,
+		Diff:           runtimeOpts.Diff,
+	}, nil
 }
 
 func hasDiffInputs(runtimeOpts *RuntimeOptions) bool {
@@ -156,4 +214,54 @@ func diffNewPath(global *GlobalOptions, runtimeOpts *RuntimeOptions) string {
 		return runtimeOpts.Diff.NewPath
 	}
 	return global.ConfigPath
+}
+
+func isJSONOutput(global *GlobalOptions) bool {
+	format, err := parseOutputFormat(global.Format)
+	return err == nil && format == outputFormatJSON
+}
+
+func parseOutputFormat(value string) (OutputFormat, error) {
+	switch OutputFormat(value) {
+	case outputFormatHuman, outputFormatJSON:
+		return OutputFormat(value), nil
+	default:
+		return "", fmt.Errorf("unsupported --format %q", value)
+	}
+}
+
+func parseRuntimeMode(value string) (model.RuntimeMode, error) {
+	switch model.RuntimeMode(value) {
+	case model.RuntimeModeSafe, model.RuntimeModeTee, model.RuntimeModeLive:
+		return model.RuntimeMode(value), nil
+	default:
+		return "", fmt.Errorf("unsupported --mode %q", value)
+	}
+}
+
+func parseRuntimeEngine(value string) (model.RuntimeEngine, error) {
+	switch model.RuntimeEngine(value) {
+	case model.RuntimeEngineAuto, model.RuntimeEngineDocker, model.RuntimeEngineContainerd:
+		return model.RuntimeEngine(value), nil
+	default:
+		return "", fmt.Errorf("unsupported --engine %q", value)
+	}
+}
+
+func parseGraphRenderMode(value string) (GraphRenderMode, error) {
+	switch GraphRenderMode(value) {
+	case graphRenderNone, graphRenderMermaid, graphRenderSVG:
+		return GraphRenderMode(value), nil
+	default:
+		return "", fmt.Errorf("unsupported --render-graph %q", value)
+	}
+}
+
+func parseGraphOutputRender(value string) (graphOutputRender, error) {
+	switch graphOutputRender(value) {
+	case graphOutputRenderMermaid, graphOutputRenderDOT, graphOutputRenderSVG, graphOutputRenderNone:
+		return graphOutputRender(value), nil
+	default:
+		return "", fmt.Errorf("unsupported --render %q", value)
+	}
 }

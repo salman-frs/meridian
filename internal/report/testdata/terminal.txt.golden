@@ -1,0 +1,29 @@
+RESULT: FAIL
+Run ID: 
+Config: collector.yaml
+Engine: docker
+Runtime backend: docker
+Mode: safe
+Collector image: otel/test:latest
+Artifacts: 
+
+What changed (risk highlights):
+- [FAIL] pipeline wiring changed
+
+Runtime assertions:
+- traces-received: FAIL (received at least one item observed 0 expected >=1)
+
+Likely causes:
+- pipeline wiring
+
+Next steps:
+- open collector.log
+
+Artifacts:
+- 
+- 
+- 
+- /tmp/graph.svg
+- 
+- 
+- 

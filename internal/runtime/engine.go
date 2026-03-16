@@ -106,7 +106,7 @@ func (a cliAdapter) RunArgs(req RunRequest) []string {
 	return args
 }
 
-func ResolveEngine(requested model.RuntimeEngine) (engineAdapter, error) {
+func resolveEngine(requested model.RuntimeEngine) (engineAdapter, error) {
 	switch requested {
 	case "", model.RuntimeEngineAuto:
 		if _, err := lookupPath("docker"); err == nil {

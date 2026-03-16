@@ -2,9 +2,12 @@ package e2eapp
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"time"
 )
+
+var logOutput io.Writer = os.Stdout
 
 func logEvent(cfg Config, level string, event string, fields map[string]any) {
 	logEventInternal(cfg, level, event, fields, false)
@@ -32,6 +35,6 @@ func logEventInternal(cfg Config, level string, event string, fields map[string]
 		entry[key] = value
 	}
 
-	encoder := json.NewEncoder(os.Stdout)
+	encoder := json.NewEncoder(logOutput)
 	_ = encoder.Encode(entry)
 }

@@ -56,3 +56,11 @@ func TestFilterBySeverity(t *testing.T) {
 		t.Fatalf("filterBySeverity() len = %d, want 2", len(got))
 	}
 }
+
+func TestParseThresholdFallsBackToLow(t *testing.T) {
+	t.Parallel()
+
+	if got := parseThreshold("unexpected"); got != model.SeverityInfo {
+		t.Fatalf("parseThreshold() = %q, want %q", got, model.SeverityInfo)
+	}
+}
